@@ -59,13 +59,18 @@ struct RuleEditorView: View {
                             GlassField(placeholder: "Rule name", text: $rule.name)
                             ScopeEditor(depth: $rule.recursionDepth)
 
-                            Picker("", selection: $rule.conditionMatch) {
-                                Text("Match all conditions").tag(ConditionMatch.all)
-                                Text("Match any condition").tag(ConditionMatch.any)
-                                Text("Match no conditions").tag(ConditionMatch.none)
+                            if rule.conditionGroups.count < 2 {
+                                // Classic single-group picker: reads/writes the
+                                // first group's mode, with `.none` kept at the
+                                // rule level — identical to the pre-groups UI.
+                                Picker("", selection: singleGroupMatch) {
+                                    Text("Match all conditions").tag(ConditionMatch.all)
+                                    Text("Match any condition").tag(ConditionMatch.any)
+                                    Text("Match no conditions").tag(ConditionMatch.none)
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.segmented)
                             }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
                         }
                         .padding(18)
                     }
@@ -74,21 +79,42 @@ struct RuleEditorView: View {
                         SectionLabel(title: "Conditions")
                         Spacer()
                         Button {
-                            rule.conditions.append(Condition(ruleId: rule.id, kind: .name, operator: .contains, value: ""))
+                            appendCondition(to: rule.conditionGroups.count - 1)
                         } label: {
                             Image(systemName: "plus")
                         }
                         .buttonStyle(IconButtonStyle())
+                        .help("Add condition")
+                        Button {
+                            addGroup()
+                        } label: {
+                            Image(systemName: "rectangle.stack.badge.plus")
+                        }
+                        .buttonStyle(IconButtonStyle())
+                        .help("Add a condition group — combine it with the others using all / any")
+                    }
+                    if rule.conditionGroups.count > 1 {
+                        Picker("", selection: $rule.conditionMatch) {
+                            Text("Match all groups").tag(ConditionMatch.all)
+                            Text("Match any group").tag(ConditionMatch.any)
+                            Text("Match no groups").tag(ConditionMatch.none)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
                     }
                     GlassCard {
                         VStack(alignment: .leading, spacing: 12) {
                             if rule.conditions.isEmpty {
                                 placeholder("No conditions — this rule matches every file in scope.")
                             }
-                            ForEach($rule.conditions, id: \.id) { $condition in
-                                ConditionRow(condition: $condition) {
-                                    rule.conditions.removeAll { $0.id == condition.id }
-                                }
+                            ForEach($rule.conditionGroups, id: \.id) { $group in
+                                ConditionGroupCard(
+                                    group: $group,
+                                    showsModePicker: rule.conditionGroups.count > 1,
+                                    showsDelete: rule.conditionGroups.count > 1,
+                                    onAddCondition: { appendCondition(to: indexOfGroup(group.id)) },
+                                    onDeleteGroup: { rule.conditionGroups.removeAll { $0.id == group.id } }
+                                )
                             }
                         }
                         .padding(18)
@@ -269,6 +295,47 @@ struct RuleEditorView: View {
         )
     }
 
+    // MARK: - Condition groups
+
+    /// The classic three-option picker for a single-group rule: `.all`/`.any`
+    /// live in the group, `.none` lives at the rule level.
+    private var singleGroupMatch: Binding<ConditionMatch> {
+        Binding(
+            get: {
+                rule.conditionMatch == .none ? .none : (rule.conditionGroups.first?.match ?? .all)
+            },
+            set: { newValue in
+                if newValue == .none {
+                    rule.conditionMatch = .none
+                } else {
+                    if !rule.conditionGroups.isEmpty {
+                        rule.conditionGroups[0].match = newValue
+                    }
+                    rule.conditionMatch = .all
+                }
+            }
+        )
+    }
+
+    private func addGroup() {
+        rule.conditionGroups.append(
+            ConditionGroup(match: .any, conditions: [
+                Condition(ruleId: rule.id, kind: .name, operator: .contains, value: ""),
+            ])
+        )
+    }
+
+    private func appendCondition(to groupIndex: Int) {
+        guard rule.conditionGroups.indices.contains(groupIndex) else { return }
+        rule.conditionGroups[groupIndex].conditions.append(
+            Condition(ruleId: rule.id, kind: .name, operator: .contains, value: "")
+        )
+    }
+
+    private func indexOfGroup(_ id: String) -> Int {
+        rule.conditionGroups.firstIndex(where: { $0.id == id }) ?? 0
+    }
+
     private func placeholder(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11))
@@ -415,6 +482,64 @@ private struct ScopeEditor: View {
         guard let depth else { return "All subfolder levels" }
         let safeDepth = max(1, depth)
         return "\(safeDepth) subfolder level\(safeDepth == 1 ? "" : "s")"
+    }
+}
+
+private struct ConditionGroupCard: View {
+    @Binding var group: ConditionGroup
+    let showsModePicker: Bool
+    let showsDelete: Bool
+    let onAddCondition: () -> Void
+    let onDeleteGroup: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if showsModePicker || showsDelete {
+                HStack {
+                    if showsModePicker {
+                        Picker("", selection: $group.match) {
+                            Text("All").tag(ConditionMatch.all)
+                            Text("Any").tag(ConditionMatch.any)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 130)
+                    }
+                    Spacer()
+                    if showsDelete {
+                        Button(role: .destructive, action: onDeleteGroup) {
+                            Image(systemName: "xmark.bin")
+                        }
+                        .buttonStyle(IconButtonStyle())
+                        .help("Delete this condition group")
+                    }
+                }
+            }
+            ForEach($group.conditions, id: \.id) { $condition in
+                ConditionRow(condition: $condition) {
+                    group.conditions.removeAll { $0.id == condition.id }
+                }
+            }
+            Button(action: onAddCondition) {
+                Label("Add condition", systemImage: "plus")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(ForelTheme.secondaryText)
+        }
+        .padding(showsModePicker || showsDelete ? 12 : 0)
+        .background(
+            Group {
+                if showsModePicker || showsDelete {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(ForelTheme.surface.opacity(0.5))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(ForelTheme.surfaceBorder)
+                        )
+                }
+            }
+        )
     }
 }
 
