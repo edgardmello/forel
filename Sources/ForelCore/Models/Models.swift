@@ -61,6 +61,30 @@ public enum ConditionMatch: String, Codable, Equatable, Sendable {
     case all
     case any
     case none
+
+    /// How this mode combines when applied to a single group of conditions,
+    /// used when migrating a flat condition list into one group. `.none` is
+    /// rule-level only ("none of the groups"), so a migrated group keeps
+    /// `.any` and the rule keeps the negation.
+    var groupDefault: ConditionMatch {
+        self == .none ? .any : self
+    }
+}
+
+/// A set of conditions combined by the group's own `match` mode
+/// ("all"/"any"). Groups combine with the rule's `conditionMatch`.
+/// A rule with a single group behaves exactly like the flat list that
+/// existed before groups.
+public struct ConditionGroup: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var match: ConditionMatch
+    public var conditions: [Condition]
+
+    public init(id: String = UUID().uuidString, match: ConditionMatch, conditions: [Condition] = []) {
+        self.id = id
+        self.match = match
+        self.conditions = conditions
+    }
 }
 
 public enum ConditionKind: String, Codable, Equatable, Sendable {
@@ -210,13 +234,29 @@ public struct Rule: Codable, Equatable, Sendable {
     public var folderId: String
     public var name: String
     public var enabled: Bool
+    /// How the condition groups combine. A rule with a single group keeps
+    /// its classic meaning: the group already carries the mode the user
+    /// picked, and combining one group with any non-`.none` mode is a no-op.
     public var conditionMatch: ConditionMatch
     /// nil = all subfolders (unlimited), 0 = current folder only, N = N levels deep.
     public var recursionDepth: Int64?
-    public var conditions: [Condition]
+    /// Source of truth for conditions. Order matters: groups are combined
+    /// left to right by `conditionMatch`, conditions inside a group by the
+    /// group's own `match`.
+    public var conditionGroups: [ConditionGroup]
     public var actions: [Action]
     public var priority: Int64
     public var createdAt: String
+
+    /// Flat projection of every condition, in group order. Setting it
+    /// collapses the rule back to a single group — the legacy shape.
+    public var conditions: [Condition] {
+        get { conditionGroups.flatMap(\.conditions) }
+        set {
+            let match = conditionGroups.count == 1 ? conditionGroups[0].match : conditionMatch.groupDefault
+            conditionGroups = [ConditionGroup(match: match, conditions: newValue)]
+        }
+    }
 
     public init(
         id: String = UUID().uuidString,
@@ -226,6 +266,7 @@ public struct Rule: Codable, Equatable, Sendable {
         conditionMatch: ConditionMatch = .all,
         recursionDepth: Int64? = 0,
         conditions: [Condition] = [],
+        conditionGroups: [ConditionGroup]? = nil,
         actions: [Action] = [],
         priority: Int64 = 0,
         createdAt: String = ISO8601DateFormatter.forelUTC.string(from: Date())
@@ -236,7 +277,7 @@ public struct Rule: Codable, Equatable, Sendable {
         self.enabled = enabled
         self.conditionMatch = conditionMatch
         self.recursionDepth = recursionDepth
-        self.conditions = conditions
+        self.conditionGroups = conditionGroups ?? [ConditionGroup(match: conditionMatch.groupDefault, conditions: conditions)]
         self.actions = actions
         self.priority = priority
         self.createdAt = createdAt

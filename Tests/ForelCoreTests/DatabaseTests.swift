@@ -495,3 +495,102 @@ import SQLite3
         }
     }
 }
+
+// MARK: - Condition groups
+
+@Suite struct DatabaseConditionGroupTests {
+    func makeDB() throws -> Database {
+        try Database(path: ":memory:")
+    }
+
+
+@Test func conditionGroupsRoundTripPreservingOrderAndMatches() throws {
+    let db = try makeDB()
+    let folder = WatchedFolder(path: "/tmp/forel-test-\(UUID().uuidString)")
+    try db.insertFolder(folder)
+    var rule = makeRule(folderId: folder.id, name: "grouped", conditionMatch: .all)
+    rule.conditionGroups = [
+        ConditionGroup(match: .any, conditions: [
+            makeCondition(.extension_, .is, "pdf", ruleId: rule.id),
+            makeCondition(.extension_, .is, "doc", ruleId: rule.id),
+        ]),
+        ConditionGroup(match: .all, conditions: [
+            makeCondition(.name, .contains, "report", ruleId: rule.id),
+        ]),
+    ]
+    rule.actions = [makeAction(.addTag, .object(["tag": .string("x")]), ruleId: rule.id)]
+
+    try db.insertRule(rule)
+
+    let loaded = try #require(try db.listRules(folderId: folder.id).first)
+    #expect(loaded.conditionMatch == .all)
+    #expect(loaded.conditionGroups.count == 2)
+    #expect(loaded.conditionGroups[0].match == .any)
+    #expect(loaded.conditionGroups[0].conditions.map(\.value) == ["pdf", "doc"])
+    #expect(loaded.conditionGroups[1].match == .all)
+    #expect(loaded.conditionGroups[1].conditions.map(\.value) == ["report"])
+    #expect(loaded.conditions.map(\.value) == ["pdf", "doc", "report"])
+
+    var updated = loaded
+    updated.conditionGroups.reverse()
+    try db.updateRule(updated)
+    let reloaded = try #require(try db.listRules(folderId: folder.id).first)
+    #expect(reloaded.conditionGroups.map(\.match) == [.all, .any])
+}
+
+@Test func legacyFlatRulesMigrateIntoASingleGroup() throws {
+    let path = NSTemporaryDirectory() + "forel-migration-\(UUID().uuidString).db"
+    defer { try? FileManager.default.removeItem(atPath: path) }
+
+    // Hand-build a version-8 database in the pre-group shape.
+    let sqlite = try {
+        var handle: OpaquePointer?
+        guard sqlite3_open(path, &handle) == SQLITE_OK, let handle else {
+            throw SQLiteError("could not open \(path)")
+        }
+        return handle
+    }()
+    defer { sqlite3_close(sqlite) }
+    func exec(_ sql: String) throws {
+        guard sqlite3_exec(sqlite, sql, nil, nil, nil) == SQLITE_OK else {
+            throw SQLiteError(String(cString: sqlite3_errmsg(sqlite)))
+        }
+    }
+    try exec("""
+        CREATE TABLE watched_folders (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1, priority INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+        CREATE TABLE rules (id TEXT PRIMARY KEY, folder_id TEXT NOT NULL REFERENCES watched_folders(id) ON DELETE CASCADE, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, condition_match TEXT NOT NULL DEFAULT 'all', recursion_depth INTEGER NOT NULL DEFAULT 0, priority INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+        CREATE TABLE conditions (id TEXT PRIMARY KEY, rule_id TEXT NOT NULL REFERENCES rules(id) ON DELETE CASCADE, kind TEXT NOT NULL, operator TEXT NOT NULL, value TEXT NOT NULL);
+        CREATE TABLE actions (id TEXT PRIMARY KEY, rule_id TEXT NOT NULL REFERENCES rules(id) ON DELETE CASCADE, kind TEXT NOT NULL, params TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE custom_tags (name TEXT PRIMARY KEY);
+        CREATE TABLE action_history (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, rule_id TEXT, rule_name TEXT NOT NULL, action_kind TEXT NOT NULL, original_path TEXT NOT NULL, result_path TEXT NOT NULL, undo TEXT NOT NULL, reversible INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'applied', message TEXT, created_at TEXT NOT NULL);
+        CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE watched_path_state (path TEXT PRIMARY KEY, volume_id INTEGER, file_id INTEGER, fingerprint TEXT, updated_at TEXT NOT NULL);
+        INSERT INTO watched_folders VALUES ('f1', '/tmp/legacy', 1, 0, '2026-01-01');
+        INSERT INTO rules VALUES ('r1', 'f1', 'legacy any', 1, 'any', 0, 0, '2026-01-01');
+        INSERT INTO rules VALUES ('r2', 'f1', 'legacy none', 1, 'none', 0, 1, '2026-01-01');
+        INSERT INTO conditions VALUES ('c1', 'r1', 'extension', 'is', 'pdf');
+        INSERT INTO conditions VALUES ('c2', 'r1', 'extension', 'is', 'doc');
+        INSERT INTO conditions VALUES ('c3', 'r2', 'name', 'contains', 'draft');
+        PRAGMA user_version = 8;
+    """)
+
+    let db = try Database(path: path)
+    let rules = try db.listRules(folderId: "f1")
+
+    let anyRule = try #require(rules.first(where: { $0.id == "r1" }))
+    #expect(anyRule.conditionMatch == .any)
+    #expect(anyRule.conditionGroups.count == 1)
+    #expect(anyRule.conditionGroups[0].match == .any)
+    #expect(anyRule.conditionGroups[0].conditions.map(\.value) == ["pdf", "doc"])
+
+    // .none stays at the rule level; the migrated group evaluates .any and
+    // the rule negates it — identical to the old flat semantics.
+    let noneRule = try #require(rules.first(where: { $0.id == "r2" }))
+    #expect(noneRule.conditionMatch == .none)
+    #expect(noneRule.conditionGroups.count == 1)
+    #expect(noneRule.conditionGroups[0].match == .any)
+    #expect(noneRule.conditionGroups[0].conditions.map(\.value) == ["draft"])
+
+    #expect(try db.userVersion() == Database.currentSchemaVersion)
+}
+}

@@ -51,8 +51,8 @@ func makeAction(_ kind: ActionKind, _ params: JSONValue, position: Int64 = 0, ru
     Action(ruleId: ruleId, kind: kind, params: params, position: position)
 }
 
-func makeRule(folderId: String = "folder", name: String, enabled: Bool = true, conditionMatch: ConditionMatch = .all, conditions: [Condition] = [], actions: [Action] = [], recursionDepth: Int64? = 0) -> Rule {
-    Rule(folderId: folderId, name: name, enabled: enabled, conditionMatch: conditionMatch, recursionDepth: recursionDepth, conditions: conditions, actions: actions)
+func makeRule(folderId: String = "folder", name: String, enabled: Bool = true, conditionMatch: ConditionMatch = .all, conditions: [Condition] = [], conditionGroups: [ConditionGroup]? = nil, actions: [Action] = [], recursionDepth: Int64? = 0) -> Rule {
+    Rule(folderId: folderId, name: name, enabled: enabled, conditionMatch: conditionMatch, recursionDepth: recursionDepth, conditions: conditions, conditionGroups: conditionGroups, actions: actions)
 }
 
 /// Writes a `kMDItemWhereFroms`-style xattr (a binary-plist-encoded

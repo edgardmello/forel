@@ -231,7 +231,16 @@ public enum RuleEngine {
                 guard !blockedRuleIds.contains(rule.id) else { continue }
                 guard rule.enabled, ruleInScope(rule, depth: currentDepth) else { continue }
                 let conditions = conditionPreviews(rule, path: currentPath)
-                guard conditionResultsMatch(conditions.map(\.matched), rule.conditionMatch) else { continue }
+                if !hasNoConditions(rule) {
+                    var matchedById: [String: Bool] = [:]
+                    for (condition, preview) in zip(rule.conditions, conditions) {
+                        matchedById[condition.id] = preview.matched
+                    }
+                    let groupResults = rule.conditionGroups.map { group in
+                        conditionResultsMatch(group.conditions.compactMap { matchedById[$0.id] }, group.match)
+                    }
+                    guard conditionResultsMatch(groupResults, rule.conditionMatch) else { continue }
+                }
                 if !checkedBusyContents {
                     checkedBusyContents = true
                     if FileReadiness.containsBusyItem(path) { return nil }
@@ -325,6 +334,25 @@ public enum RuleEngine {
         }
     }
 
+    /// True when the rule has no conditions at all — it matches everything,
+    /// exactly like an empty flat list did before condition groups.
+    private static func hasNoConditions(_ rule: Rule) -> Bool {
+        rule.conditionGroups.allSatisfy { $0.conditions.isEmpty }
+    }
+
+    /// Combines a group's condition results lazily, cheapest condition
+    /// first (see `evaluationCost`), so an expensive `contents` extraction
+    /// still never runs when it can no longer change the outcome.
+    private static func conditionsMatch(_ conditions: [Condition], _ match: ConditionMatch, path: String) -> Bool {
+        if conditions.isEmpty { return true }
+        let ordered = conditions.sorted { evaluationCost($0.kind) < evaluationCost($1.kind) }
+        switch match {
+        case .all: return ordered.allSatisfy { ConditionEvaluator.evaluate($0, path: path) }
+        case .any: return ordered.contains { ConditionEvaluator.evaluate($0, path: path) }
+        case .none: return ordered.allSatisfy { !ConditionEvaluator.evaluate($0, path: path) }
+        }
+    }
+
     /// Like `ruleInScope` + condition matching combined, but evaluates cheap
     /// conditions first and short-circuits, so an expensive `contents`
     /// extraction (PDF text, OCR, zip parsing, Spotlight) only runs when it
@@ -335,17 +363,12 @@ public enum RuleEngine {
     /// every condition on purpose, to show each one's result in the Dry Run.
     private static func ruleMatches(_ rule: Rule, path: String, depth: Int) -> Bool {
         guard ruleInScope(rule, depth: depth) else { return false }
-        if rule.conditions.isEmpty { return true }
+        if hasNoConditions(rule) { return true }
 
-        let ordered = rule.conditions.sorted { evaluationCost($0.kind) < evaluationCost($1.kind) }
-        switch rule.conditionMatch {
-        case .all:
-            return ordered.allSatisfy { ConditionEvaluator.evaluate($0, path: path) }
-        case .any:
-            return ordered.contains { ConditionEvaluator.evaluate($0, path: path) }
-        case .none:
-            return ordered.allSatisfy { !ConditionEvaluator.evaluate($0, path: path) }
+        let groupResults = rule.conditionGroups.map { group in
+            conditionsMatch(group.conditions, group.match, path: path)
         }
+        return conditionResultsMatch(groupResults, rule.conditionMatch)
     }
 
     /// Relative cost of evaluating a condition, used only to order evaluation so
