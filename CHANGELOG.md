@@ -15,6 +15,7 @@ All notable changes to Forel are documented here. Format loosely follows
 - Added a Sync Folders action that mirrors relative file changes between two folders, can run two-way, and can move counterpart files to the Trash when deletions are propagated.
 - The menu bar icon can now be hidden while Forel remains available from Finder or Spotlight.
 - Rules can now match when none of their conditions pass and can evaluate Finder comments, file paths, folder item counts, last-opened dates, image dimensions, photo capture dates, PDF page counts, and Spotlight metadata.
+- Rules can now sort items into subfolders, synchronize copies to another folder, create ZIP archives, edit Finder comments and item attributes, open or reveal items, and create Finder aliases.
 
 ### Changed
 - The menu bar quick panel no longer shows the Last 30 Days success and failure counters, and its folder, rule, and history counts now appear in a simpler Overview row.

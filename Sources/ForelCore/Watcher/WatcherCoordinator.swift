@@ -74,11 +74,10 @@ public final class WatcherCoordinator: @unchecked Sendable {
         self.db = db
         self.settleInterval = settleInterval
         var watcherRef: FileWatcher!
-        watcherRef = FileWatcher(onEvent: { _, _ in })
+        watcherRef = FileWatcher(onEvent: { _ in })
         self.watcher = watcherRef
         self.watcher.replaceHandler { [weak self] event in
             self?.enqueue(event: event)
-        }
         }
     }
 

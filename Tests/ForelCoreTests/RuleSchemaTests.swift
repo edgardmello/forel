@@ -46,7 +46,7 @@ import Foundation
     }
 
     @Test func hasOptionsMatchesActionsThatExposeAnOptionsPopover() {
-        let expectedWithOptions: Set<ActionKind> = [.moveToFolder, .copyToFolder, .syncFolders, .runShortcut, .openApplication, .rename, .importToLibrary, .uncompress]
+        let expectedWithOptions: Set<ActionKind> = [.moveToFolder, .copyToFolder, .sortIntoSubfolder, .syncToFolder, .syncFolders, .runShortcut, .openApplication, .rename, .importToLibrary, .uncompress]
         for kind in RuleSchema.actionKinds {
             #expect(kind.hasOptions == expectedWithOptions.contains(kind), "\(kind) hasOptions mismatch")
         }
