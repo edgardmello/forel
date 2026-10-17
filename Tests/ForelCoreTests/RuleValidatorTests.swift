@@ -156,6 +156,22 @@ import Foundation
         #expect(RuleValidator.validate([missingAlias]) == [.init(message: "Alias destination cannot be empty")])
     }
 
+    @Test func automationActionsValidateTheirInputs() {
+        let validPause = makeAction(.pause, .object([ActionParam.pauseSeconds: .number(0.5)]))
+        let invalidPause = makeAction(.pause, .object([ActionParam.pauseSeconds: .number(-1)]))
+        let missingScript = makeAction(.runAppleScript, .object([:]))
+        let missingWorkflow = makeAction(.runAutomatorWorkflow, .object([:]))
+
+        #expect(RuleValidator.validate([validPause]).isEmpty)
+        #expect(RuleValidator.validate([invalidPause]) == [.init(message: "Pause duration must be a non-negative number of seconds")])
+        #expect(RuleValidator.validate([missingScript]) == [.init(message: "Script cannot be empty")])
+        #expect(RuleValidator.validate([missingWorkflow]) == [.init(message: "Automator workflow cannot be empty")])
+
+        let missingScriptFile = makeAction(.runScript, .object([ActionParam.scriptSource: .string("file")]))
+        let scriptFile = makeAction(.runScript, .object([ActionParam.scriptSource: .string("file"), ActionParam.scriptPath: .string("/tmp/script.sh")]))
+        #expect(RuleValidator.validate([missingScriptFile]) == [.init(message: "Choose a script file")])
+        #expect(RuleValidator.validate([scriptFile]).isEmpty)    }
+
     @Test func unrelatedActionProducesNoIssues() {
         let actions = [makeAction(.moveToTrash, .object([:]))]
         #expect(RuleValidator.validate(actions).isEmpty)

@@ -147,6 +147,9 @@ public enum ActionKind: String, Codable, Equatable, Sendable {
     case archive
     case runScript = "run_script"
     case runShortcut = "run_shortcut"
+    case runAppleScript = "run_applescript"
+    case runJavaScript = "run_javascript"
+    case runAutomatorWorkflow = "run_automator_workflow"
     case openApplication = "open_application"
     case open
     case showInFinder = "show_in_finder"
@@ -155,7 +158,8 @@ public enum ActionKind: String, Codable, Equatable, Sendable {
     case uncompress
     case runRulesOnFolderContents = "run_rules_on_folder_contents"
     case ignore
-
+    case pause
+    case displayNotification = "display_notification"
     public init(dbValue: String) {
         self = ActionKind(rawValue: dbValue) ?? .moveToFolder
     }

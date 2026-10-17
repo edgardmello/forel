@@ -223,6 +223,8 @@ public enum ActionParam {
     public static let tags = "tags"
     public static let color = "color"
     public static let script = "script"
+    public static let scriptSource = "script_source"
+    public static let scriptPath = "script_path"
     public static let shortcutName = "shortcut_name"
     public static let shortcutInputMode = "shortcut_input_mode"
     public static let applicationPath = "application_path"
@@ -234,7 +236,23 @@ public enum ActionParam {
     public static let comment = "comment"
     public static let aliasDestination = "alias_destination"
     public static let uploadURL = "upload_url"
+    public static let pauseSeconds = "pause_seconds"
+    public static let workflowPath = "workflow_path"
+    public static let notificationTitle = "notification_title"
+    public static let notificationBody = "notification_body"
 }
+
+/// Where a script action's code comes from: typed into Forel, or a script
+/// file on disk. Rules without the param keep their embedded script.
+public enum ScriptSource: String, Sendable {
+    case embedded
+    case file
+
+    public static func of(_ action: Action) -> ScriptSource {
+        ScriptSource(rawValue: action.params[ActionParam.scriptSource]?.stringValue ?? "") ?? .embedded
+    }
+}
+
 
 /// Validation, display, and command construction shared by upload previews,
 /// execution, and rule validation.
@@ -275,8 +293,7 @@ public enum UploadDestination {
             arguments.append("--ftp-create-dirs")
         }
         arguments += ["--upload-file", sourcePath, "--", destination.absoluteString]
-        return arguments
-    }
+        return arguments    }
 }
 
 /// The abstract shape of an action parameter; the UI maps it to a concrete editor.
@@ -291,6 +308,8 @@ public enum ActionParamKind: Sendable, Equatable {
     case applicationPath
     case libraryType
     case playlist
+    case duration
+    case filePath
 }
 
 public struct ActionParamSpec: Sendable, Equatable {
@@ -324,17 +343,20 @@ public extension ActionKind {
         case .toggleExtension: return "Toggle extension"
         case .toggleLock: return "Toggle lock"
         case .archive: return "Archive"
-        case .runScript: return "Run script"
-        case .runShortcut: return "Run shortcut"
+        case .runScript: return "Run shell script"        case .runShortcut: return "Run shortcut"
+        case .runAppleScript: return "Run AppleScript"
+        case .runJavaScript: return "Run JavaScript"
+        case .runAutomatorWorkflow: return "Run Automator workflow"
         case .openApplication: return "Open application"
         case .open: return "Open"
         case .showInFinder: return "Show in Finder"
         case .makeAlias: return "Make alias"
         case .importToLibrary: return "Import to library"
         case .uncompress: return "Uncompress"
+        case .pause: return "Pause"
+        case .displayNotification: return "Display notification"
         case .runRulesOnFolderContents: return "Run rules on folder contents"
-        case .ignore: return "Ignore"
-        }
+        case .ignore: return "Ignore"        }
     }
 
     /// SF Symbol used to represent the action in the UI (e.g. activity history).
@@ -356,15 +378,19 @@ public extension ActionKind {
         case .archive: return "archivebox"
         case .runScript: return "terminal"
         case .runShortcut: return "square.stack.3d.up"
+        case .runAppleScript: return "applescript"
+        case .runJavaScript: return "curlybraces"
+        case .runAutomatorWorkflow: return "gearshape.2"
         case .openApplication: return "app"
         case .open: return "arrow.up.forward.app"
         case .showInFinder: return "folder"
         case .makeAlias: return "arrowshape.turn.up.right"
         case .importToLibrary: return "tray.full"
         case .uncompress: return "doc.zipper"
+        case .pause: return "pause.circle"
+        case .displayNotification: return "bell"
         case .runRulesOnFolderContents: return "folder.badge.play"
-        case .ignore: return "eye.slash"
-        }
+        case .ignore: return "eye.slash"        }
     }
 
     /// Whether this action kind has an "Options" popover in the rule editor
@@ -375,8 +401,7 @@ public extension ActionKind {
         switch self {
         case .moveToFolder, .copyToFolder, .sortIntoSubfolder, .syncToFolder, .syncFolders, .runShortcut, .openApplication, .rename, .importToLibrary, .uncompress:
             return true
-        case .upload, .addTag, .removeTag, .setColorLabel, .addComment, .toggleExtension, .toggleLock, .archive, .runScript, .open, .showInFinder, .makeAlias, .moveToTrash, .delete, .runRulesOnFolderContents, .ignore:
-            return false
+        case .upload, .addTag, .removeTag, .setColorLabel, .addComment, .toggleExtension, .toggleLock, .archive, .runScript, .runAppleScript, .runJavaScript, .runAutomatorWorkflow, .open, .showInFinder, .makeAlias, .moveToTrash, .delete, .pause, .displayNotification, .runRulesOnFolderContents, .ignore:            return false
         }
     }
 
@@ -400,9 +425,11 @@ public extension ActionKind {
             return [ActionParamSpec(key: ActionParam.color, kind: .colorLabel)]
         case .addComment:
             return [ActionParamSpec(key: ActionParam.comment, kind: .text)]
-        case .runScript:
-            return [ActionParamSpec(key: ActionParam.script, kind: .script)]
-        case .runShortcut:
+        case .runScript, .runAppleScript, .runJavaScript:
+            return [ActionParamSpec(key: ActionParam.script, kind: .script),
+                    ActionParamSpec(key: ActionParam.scriptPath, kind: .filePath)]
+        case .runAutomatorWorkflow:
+            return [ActionParamSpec(key: ActionParam.workflowPath, kind: .filePath)]        case .runShortcut:
             return [ActionParamSpec(key: ActionParam.shortcutName, kind: .shortcut)]
         case .openApplication:
             return [ActionParamSpec(key: ActionParam.applicationPath, kind: .applicationPath)]
@@ -413,6 +440,12 @@ public extension ActionKind {
                     ActionParamSpec(key: ActionParam.targetPlaylist, kind: .playlist)]
         case .moveToTrash, .delete, .toggleExtension, .toggleLock, .archive, .open, .showInFinder, .uncompress, .runRulesOnFolderContents, .ignore:
             return []
+        case .pause:
+            return [ActionParamSpec(key: ActionParam.pauseSeconds, kind: .duration)]
+        case .displayNotification:
+            return [ActionParamSpec(key: ActionParam.notificationTitle, kind: .text),
+                    ActionParamSpec(key: ActionParam.notificationBody, kind: .text)]
+        case .moveToTrash, .delete, .uncompress:            return []
         }
     }
 }
@@ -461,10 +494,9 @@ public enum RuleSchema {
     public static let actionKindGroups: [ActionKindGroup] = [
         ActionKindGroup(title: nil, kinds: [.moveToFolder, .copyToFolder, .syncFolders, .rename, .sortIntoSubfolder, .syncToFolder, .archive, .upload, .uncompress]),
         ActionKindGroup(title: "Tags", kinds: [.addTag, .removeTag, .setColorLabel]),
-        ActionKindGroup(title: "Finder", kinds: [.addComment, .toggleExtension, .toggleLock, .open, .showInFinder, .makeAlias]),
-        ActionKindGroup(title: "Automation", kinds: [.runScript, .runShortcut, .openApplication]),
-        ActionKindGroup(title: "Rule flow", kinds: [.runRulesOnFolderContents, .ignore]),
-        ActionKindGroup(title: "Disposal", kinds: [.moveToTrash, .delete]),
+ActionKindGroup(title: "Finder", kinds: [.addComment, .toggleExtension, .toggleLock, .open, .showInFinder, .makeAlias]),
+        ActionKindGroup(title: "Automation", kinds: [.runScript, .runShortcut, .openApplication, .runAppleScript, .runJavaScript, .runAutomatorWorkflow, .pause, .displayNotification]),
+        ActionKindGroup(title: "Rule flow", kinds: [.runRulesOnFolderContents, .ignore]),        ActionKindGroup(title: "Disposal", kinds: [.moveToTrash, .delete]),
         ActionKindGroup(title: "Library", kinds: [.importToLibrary]),
     ]
 
