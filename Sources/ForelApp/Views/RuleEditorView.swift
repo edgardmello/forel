@@ -962,6 +962,10 @@ private struct ActionRow: View {
                 .font(.system(size: 11))
                 .foregroundStyle(ForelTheme.secondaryText)
                 .frame(minHeight: 32, alignment: .center)
+        case .runRulesOnFolderContents:
+            actionDescription("Runs the full rule list on items inside this folder")
+        case .ignore:
+            actionDescription("Stops this item from matching later rules")
         case .moveToTrash, .delete:
             Text("No parameters")
                 .font(.system(size: 11))

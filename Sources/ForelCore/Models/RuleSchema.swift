@@ -287,6 +287,8 @@ public extension ActionKind {
         case .makeAlias: return "Make alias"
         case .importToLibrary: return "Import to library"
         case .uncompress: return "Uncompress"
+        case .runRulesOnFolderContents: return "Run rules on folder contents"
+        case .ignore: return "Ignore"
         }
     }
 
@@ -314,6 +316,8 @@ public extension ActionKind {
         case .makeAlias: return "arrowshape.turn.up.right"
         case .importToLibrary: return "tray.full"
         case .uncompress: return "doc.zipper"
+        case .runRulesOnFolderContents: return "folder.badge.play"
+        case .ignore: return "eye.slash"
         }
     }
 
@@ -325,7 +329,7 @@ public extension ActionKind {
         switch self {
         case .moveToFolder, .copyToFolder, .sortIntoSubfolder, .syncToFolder, .syncFolders, .runShortcut, .openApplication, .rename, .importToLibrary, .uncompress:
             return true
-        case .addTag, .removeTag, .setColorLabel, .addComment, .toggleExtension, .toggleLock, .archive, .runScript, .open, .showInFinder, .makeAlias, .moveToTrash, .delete:
+        case .addTag, .removeTag, .setColorLabel, .addComment, .toggleExtension, .toggleLock, .archive, .runScript, .open, .showInFinder, .makeAlias, .moveToTrash, .delete, .runRulesOnFolderContents, .ignore:
             return false
         }
     }
@@ -359,7 +363,7 @@ public extension ActionKind {
         case .importToLibrary:
             return [ActionParamSpec(key: ActionParam.libraryType, kind: .libraryType),
                     ActionParamSpec(key: ActionParam.targetPlaylist, kind: .playlist)]
-        case .moveToTrash, .delete, .toggleExtension, .toggleLock, .archive, .open, .showInFinder, .uncompress:
+        case .moveToTrash, .delete, .toggleExtension, .toggleLock, .archive, .open, .showInFinder, .uncompress, .runRulesOnFolderContents, .ignore:
             return []
         }
     }
@@ -411,6 +415,7 @@ public enum RuleSchema {
         ActionKindGroup(title: "Tags", kinds: [.addTag, .removeTag, .setColorLabel]),
         ActionKindGroup(title: "Finder", kinds: [.addComment, .toggleExtension, .toggleLock, .open, .showInFinder, .makeAlias]),
         ActionKindGroup(title: "Automation", kinds: [.runScript, .runShortcut, .openApplication]),
+        ActionKindGroup(title: "Rule flow", kinds: [.runRulesOnFolderContents, .ignore]),
         ActionKindGroup(title: "Disposal", kinds: [.moveToTrash, .delete]),
         ActionKindGroup(title: "Library", kinds: [.importToLibrary]),
     ]

@@ -16,6 +16,7 @@ All notable changes to Forel are documented here. Format loosely follows
 - The menu bar icon can now be hidden while Forel remains available from Finder or Spotlight.
 - Rules can now match when none of their conditions pass and can evaluate Finder comments, file paths, folder item counts, last-opened dates, image dimensions, photo capture dates, PDF page counts, and Spotlight metadata.
 - Rules can now sort items into subfolders, synchronize copies to another folder, create ZIP archives, edit Finder comments and item attributes, open or reveal items, and create Finder aliases.
+- Rules can now process a matched folder's contents or ignore an item before it reaches later rules.
 
 ### Changed
 - The menu bar quick panel no longer shows the Last 30 Days success and failure counters, and its folder, rule, and history counts now appear in a simpler Overview row.
