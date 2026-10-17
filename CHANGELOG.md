@@ -14,6 +14,7 @@ All notable changes to Forel are documented here. Format loosely follows
 - The menu bar quick panel now shows recent activity across all folders, showing the 10 latest actions first and loading more as you scroll.
 - Added a Sync Folders action that mirrors relative file changes between two folders, can run two-way, and can move counterpart files to the Trash when deletions are propagated.
 - The menu bar icon can now be hidden while Forel remains available from Finder or Spotlight.
+- Rules can now match when none of their conditions pass and can evaluate Finder comments, file paths, folder item counts, last-opened dates, image dimensions, photo capture dates, PDF page counts, and Spotlight metadata.
 
 ### Changed
 - The menu bar quick panel no longer shows the Last 30 Days success and failure counters, and its folder, rule, and history counts now appear in a simpler Overview row.

@@ -295,6 +295,7 @@ public enum RuleEngine {
         switch match {
         case .all: return results.allSatisfy { $0 }
         case .any: return results.contains(true)
+        case .none: return results.allSatisfy { !$0 }
         }
     }
 
@@ -316,6 +317,8 @@ public enum RuleEngine {
             return ordered.allSatisfy { ConditionEvaluator.evaluate($0, path: path) }
         case .any:
             return ordered.contains { ConditionEvaluator.evaluate($0, path: path) }
+        case .none:
+            return ordered.allSatisfy { !ConditionEvaluator.evaluate($0, path: path) }
         }
     }
 
