@@ -68,6 +68,7 @@ final class AppModel: ObservableObject {
     private var runNowMessageId: UUID?
     @Published private(set) var isPreviewing = false
     @Published var previewResult: PreviewResult?
+    @Published var showHazelImportAssistant = false
     @Published private var ruleExpansionPreferences = RuleExpansionPreferences()
 
     let db: Database
@@ -85,6 +86,7 @@ final class AppModel: ObservableObject {
     /// activity. A burst of files makes one bump, not one per file.
     @Published private(set) var watcherHistoryRevision = 0
     private var watcherHistoryRevisionTask: Task<Void, Never>?
+        private let hazelAppURL: URL?
 
     init() throws {
         let appSupportRoot = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -95,6 +97,7 @@ final class AppModel: ObservableObject {
 
         let db = try Database(path: dbPath)
         self.db = db
+        self.hazelAppURL = Self.locateHazel()
         self.coordinator = WatcherCoordinator(db: db)
         self.coordinator.onActivity = { [weak self] summary in
             Task { @MainActor in
@@ -139,6 +142,8 @@ final class AppModel: ObservableObject {
         self.ruleExpansionPreferences = db.withLock { db in RuleExpansionPreferences.load(from: db) }
 
         reloadFolders()
+        let hazelPromptSeen = db.withLock { db in (try? db.getSetting("hazel_import_prompt_seen")) == "1" }
+        showHazelImportAssistant = !hazelPromptSeen && folders.isEmpty && hazelAppURL != nil
         startWatchingEnabledFolders()
         startHistoryCleanupTimer()
         observeVolumeMounts()
@@ -171,6 +176,13 @@ final class AppModel: ObservableObject {
     private func volumeDidMount(atPath mountPoint: String) {
         volumeNotifier.volumeConnected((mountPoint as NSString).lastPathComponent)
         coordinator.volumeDidMount(atPath: mountPoint)
+    }
+
+    private static func locateHazel() -> URL? {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.noodlesoft.Hazel")
+            ?? ["/Applications/Hazel.app", "/Applications/Setapp/Hazel.app"]
+                .map(URL.init(fileURLWithPath:))
+                .first(where: { FileManager.default.fileExists(atPath: $0.path) })
     }
 
     /// Forel's bundle identifier moved from `com.forel.app` (`.app` isn't a
@@ -550,6 +562,53 @@ final class AppModel: ObservableObject {
         clearRuleExpansionState(rule.id)
         if !paused { coordinator.refreshWatchedPaths() }
         reloadRules()
+    }
+
+    func exportRules(to url: URL) {
+        do {
+            let data = try RuleTransfer.exportForel(rules)
+            try data.write(to: url, options: .atomic)
+            showRunNowMessage(RunNowMessage(text: "Exported \(rules.count) rule\(rules.count == 1 ? "" : "s")", hasFailures: false, folderId: selectedFolderId ?? ""))
+        } catch {
+            showError(error)
+        }
+    }
+
+    @discardableResult
+    func importRules(from url: URL) -> Bool {
+        guard let folderId = selectedFolderId else { return false }
+        do {
+            let result = try RuleTransfer.importRules(from: Data(contentsOf: url), folderId: folderId)
+            try db.withLock { db in
+                for rule in result.rules { try db.insertRule(rule) }
+            }
+            reloadRules()
+            if result.issues.isEmpty {
+                showRunNowMessage(RunNowMessage(text: "Imported \(result.rules.count) rule\(result.rules.count == 1 ? "" : "s")", hasFailures: false, folderId: folderId))
+            } else {
+                alertTitle = "Imported with review needed"
+                errorMessage = "Imported \(result.rules.count) rule\(result.rules.count == 1 ? "" : "s"). Rules with unsupported Hazel parts were disabled.\n\n"
+                    + result.issues.map { "\($0.ruleName): \($0.message)" }.joined(separator: "\n")
+            }
+            return true
+        } catch {
+            showError(error)
+            return false
+        }
+    }
+
+    func openHazel() {
+        guard let hazelAppURL else { return }
+        NSWorkspace.shared.openApplication(at: hazelAppURL, configuration: .init()) { _, error in
+            if let error {
+                Task { @MainActor in self.showError(error) }
+            }
+        }
+    }
+
+    func finishHazelImportAssistant() {
+        db.withLock { db in try? db.setSetting("hazel_import_prompt_seen", "1") }
+        showHazelImportAssistant = false
     }
 
     func toggleRule(_ rule: Rule, enabled: Bool) {

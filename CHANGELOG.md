@@ -6,6 +6,7 @@ All notable changes to Forel are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- Rules can now be imported and exported as `.forelrules` files named after their watched folder, and Hazel exports can be migrated with unsupported parts clearly flagged for review.
 - Right-clicking a watched folder in the sidebar now offers Show in Finder.
 - Activity can now be opened from the bottom of the sidebar, next to Settings.
 - When Run Now has failed actions, its result now stays on screen with a Show in Activity link to see what went wrong.
