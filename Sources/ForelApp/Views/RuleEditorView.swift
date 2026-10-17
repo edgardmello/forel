@@ -896,6 +896,8 @@ private struct ActionRow: View {
             RenamePatternEditor(pattern: paramBinding(ActionParam.pattern), cleanFileName: action.params[ActionParam.cleanFileName]?.boolValue == true)
         case .sortIntoSubfolder:
             GlassField(placeholder: "Subfolder path", text: paramBinding(ActionParam.subfolder))
+        case .upload:
+            GlassField(placeholder: "FTP, SFTP, or WebDAV destination URL", text: paramBinding(ActionParam.uploadURL))
         case .addTag, .removeTag:
             TagTokensEditor(tags: tagsBinding, placeholder: action.kind == .addTag ? "Add tag" : "Tag")
         case .setColorLabel:

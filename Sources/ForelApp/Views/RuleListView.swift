@@ -500,6 +500,9 @@ private struct RuleDetails: View {
             return ("into \(action.params[ActionParam.subfolder]?.stringValue ?? "subfolder")", nil)
         case .syncToFolder, .syncFolders:
             return ("sync to folder", action.params[ActionParam.destination]?.stringValue)
+        case .upload:
+            let destination = action.params[ActionParam.uploadURL]?.stringValue ?? ""
+            return ("upload", destination.isEmpty ? nil : UploadDestination.displayString(for: destination))
         case .moveToTrash:
             return ("move to Trash", nil)
         case .delete:

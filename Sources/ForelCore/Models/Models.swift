@@ -135,6 +135,7 @@ public enum ActionKind: String, Codable, Equatable, Sendable {
     case rename
     case sortIntoSubfolder = "sort_into_subfolder"
     case syncToFolder = "sync_to_folder"
+    case upload
     case moveToTrash = "move_to_trash"
     case delete
     case addTag = "add_tag"
