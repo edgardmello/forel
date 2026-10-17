@@ -13,6 +13,7 @@ All notable changes to Forel are documented here. Format loosely follows
 - Added a getting-started example for lowercasing filenames and replacing spaces with underscores, with guidance on how scripts receive files.
 - The menu bar quick panel now shows recent activity across all folders, showing the 10 latest actions first and loading more as you scroll.
 - Added a Sync Folders action that mirrors relative file changes between two folders, can run two-way, and can move counterpart files to the Trash when deletions are propagated.
+- The menu bar icon can now be hidden while Forel remains available from Finder or Spotlight.
 
 ### Changed
 - The menu bar quick panel no longer shows the Last 30 Days success and failure counters, and its folder, rule, and history counts now appear in a simpler Overview row.
