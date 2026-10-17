@@ -12,6 +12,7 @@ All notable changes to Forel are documented here. Format loosely follows
 - Automatic rules now notify you once when a disk or network share they move or copy to isn't connected, and run again on the waiting files as soon as it's back.
 - Added a getting-started example for lowercasing filenames and replacing spaces with underscores, with guidance on how scripts receive files.
 - The menu bar quick panel now shows recent activity across all folders, showing the 10 latest actions first and loading more as you scroll.
+- Added a Sync Folders action that mirrors relative file changes between two folders, can run two-way, and can move counterpart files to the Trash when deletions are propagated.
 
 ### Changed
 - The menu bar quick panel no longer shows the Last 30 Days success and failure counters, and its folder, rule, and history counts now appear in a simpler Overview row.

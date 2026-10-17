@@ -19,6 +19,7 @@ import Foundation
 
 public enum FileWatcherEvent: Equatable, Sendable {
     case pathArrived(String)
+    case pathRemoved(String)
     case rescanSubtree(String)
 }
 
@@ -60,6 +61,13 @@ public final class FileWatcher: @unchecked Sendable {
         let paths = watchedPaths
         lock.unlock()
         if inserted { rebuildStream(paths: paths) }
+    }
+
+    public func replaceAll(_ paths: Set<String>) {
+        lock.lock()
+        watchedPaths = paths
+        lock.unlock()
+        rebuildStream(paths: paths)
     }
 
     public func remove(_ path: String) {
@@ -134,6 +142,11 @@ public final class FileWatcher: @unchecked Sendable {
             || flags & UInt32(kFSEventStreamEventFlagKernelDropped) != 0
         if needsRescan {
             return .rescanSubtree(path)
+        }
+
+        if flags & UInt32(kFSEventStreamEventFlagItemRemoved) != 0,
+           !shouldReportEvent(path: path, flags: flags) {
+            return .pathRemoved(path)
         }
 
         return shouldReportEvent(path: path, flags: flags) ? .pathArrived(path) : nil

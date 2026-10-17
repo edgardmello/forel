@@ -839,7 +839,7 @@ private struct ActionRow: View {
 
     @ViewBuilder private var actionParams: some View {
         switch action.kind {
-        case .moveToFolder, .copyToFolder:
+        case .moveToFolder, .copyToFolder, .syncFolders:
             FolderField(placeholder: "Destination folder", path: paramBinding(ActionParam.destination))
         case .rename:
             RenamePatternEditor(pattern: paramBinding(ActionParam.pattern), cleanFileName: action.params[ActionParam.cleanFileName]?.boolValue == true)
@@ -912,6 +912,10 @@ private struct ActionRow: View {
                     params[ActionParam.libraryType] = .string(LibraryType.music.rawValue)
                 } else if newKind == .openApplication {
                     params[ActionParam.passFileToApplication] = .bool(true)
+                } else if newKind == .syncFolders {
+                    params[ActionParam.syncDirection] = .string(SyncDirection.twoWay.rawValue)
+                    params[ActionParam.syncDeletePolicy] = .string(SyncDeletePolicy.moveToTrash.rawValue)
+                }
                 }
                 action = Action(id: action.id, ruleId: action.ruleId, kind: newKind, params: .object(params), position: action.position)
             }
@@ -972,6 +976,8 @@ private struct ActionOptionsView: View {
                 openApplicationOptions
             case .moveToFolder, .copyToFolder, .importToLibrary, .uncompress:
                 conflictResolutionOptions
+            case .syncFolders:
+                syncOptions
             case .rename:
                 renameOptions
             default:
@@ -1025,6 +1031,36 @@ private struct ActionOptionsView: View {
                 label: { value in ShortcutInputMode(rawValue: value)?.label ?? value }
             )
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var syncOptions: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Direction")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(ForelTheme.secondaryText)
+
+                StringSelectMenu(
+                    selection: paramBinding(ActionParam.syncDirection, defaultValue: SyncDirection.twoWay.rawValue),
+                    options: SyncDirection.allCases.map(\.rawValue),
+                    label: { value in SyncDirection(rawValue: value)?.label ?? value }
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Deletes")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(ForelTheme.secondaryText)
+
+                StringSelectMenu(
+                    selection: paramBinding(ActionParam.syncDeletePolicy, defaultValue: SyncDeletePolicy.moveToTrash.rawValue),
+                    options: SyncDeletePolicy.allCases.map(\.rawValue),
+                    label: { value in SyncDeletePolicy(rawValue: value)?.label ?? value }
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
