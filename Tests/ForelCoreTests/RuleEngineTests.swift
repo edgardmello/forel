@@ -313,6 +313,27 @@ import Foundation
         #expect(runElapsed >= 0.015)
     }
 
+    /// Dry Run and the editor's Test must announce how a rename converges
+    /// when the target name is taken: identical re-deliveries show the Trash
+    /// plan, different content shows the resolved " (N)" name.
+    @Test func previewRenameResolvesTargetCollisions() throws {
+        let dir = TempDir()
+        _ = dir.file("2026-iptu.pdf", contents: "one")
+        let reDelivered = dir.file("iptu2026.pdf", contents: "one")
+        let rule = makeRule(
+            name: "iptu",
+            conditions: [makeCondition(.extension_, .is, "pdf")],
+            actions: [makeAction(.rename, .object(["pattern": .string("2026-iptu.{extension}")]))]
+        )
+
+        let identical = try #require(RuleEngine.previewFile(path: reDelivered, depth: 0, rules: [rule]))
+        #expect(identical.rules[0].actions[0].description.contains("Trash"))
+
+        try "different".write(toFile: reDelivered, atomically: true, encoding: .utf8)
+        let distinct = try #require(RuleEngine.previewFile(path: reDelivered, depth: 0, rules: [rule]))
+        #expect(distinct.rules[0].actions[0].targetPath == (dir.path as NSString).appendingPathComponent("2026-iptu (1).pdf"))
+    }
+
     @Test func previewFileHidesAlreadyAppliedActions() throws {
         let dir = TempDir()
         let file = dir.file("photo.jpg", contents: "img")

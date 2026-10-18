@@ -31,6 +31,7 @@ All notable changes to Forel are documented here. Format loosely follows
 - Settings → About now shows the version, build, copyright, and repository link, matching the About Forel window.
 
 ### Fixed
+- Renaming no longer fails when a file with the target name already exists: identical re-deliveries of the same download converge on the one renamed copy (the duplicate goes to the Trash, undoable), and genuinely different files get the usual " (1)" suffix instead of being left behind with the old name.
 - Contents conditions now match regardless of letter case, so a rule searching for "Fernanda Freitas" also finds "FERNANDA FREITAS" in a document. Regex conditions keep their own case rules.
 - Forel now re-registers itself to start at login when macOS loses the registration (a system update or cleaner app can remove it), and Settings warns with a fix instead of showing the toggle as on when Forel isn't actually set to launch.
 - The menu bar icon now appears when Forel starts at login, without having to reopen the app.

@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import Foundation
+import CryptoKit
 import UniformTypeIdentifiers
 import ZIPFoundation
 #if canImport(UserNotifications)
@@ -534,9 +535,37 @@ public enum ActionExecutor {
         if action.params[ActionParam.cleanFileName]?.boolValue == true {
             newName = cleanFileName(newName)
         }
-        let dest = (path as NSString).deletingLastPathComponent + "/" + newName
+        let dir = (path as NSString).deletingLastPathComponent
+        let naiveDest = (dir as NSString).appendingPathComponent(newName)
+        guard FileManager.default.fileExists(atPath: naiveDest) else {
+            try FileManager.default.moveItem(atPath: path, toPath: naiveDest)
+            return Applied(newPath: naiveDest, undo: .move(from: path, to: naiveDest))
+        }
+        // The target name is taken. When the arrival is byte-identical to
+        // the file already at that name, it's a redundant re-delivery
+        // (browsers and messengers writing the same download twice) —
+        // converge on the one copy by trashing the duplicate, undoable like
+        // any move. Genuinely different content keeps both files, with the
+        // same " (N)" suffix Finder and Move use.
+        if contentsMatch(path, naiveDest) {
+            let trashed = uniqueDest(dir: try trashDir(), fileName: (path as NSString).lastPathComponent)
+            try FileManager.default.moveItem(atPath: path, toPath: trashed)
+            return Applied(newPath: trashed, undo: .move(from: path, to: trashed))
+        }
+        let dest = uniqueDest(dir: dir, fileName: newName)
         try FileManager.default.moveItem(atPath: path, toPath: dest)
         return Applied(newPath: dest, undo: .move(from: path, to: dest))
+    }
+
+    /// True when two files hold identical bytes — size first as a cheap
+    /// reject, then SHA-256, so the "same download delivered twice" path
+    /// never trashes a file that merely shares the target's name and size.
+    private static func contentsMatch(_ a: String, _ b: String) -> Bool {
+        guard
+            let da = try? Data(contentsOf: URL(fileURLWithPath: a), options: .mappedIfSafe),
+            let db = try? Data(contentsOf: URL(fileURLWithPath: b), options: .mappedIfSafe)
+        else { return false }
+        return da.count == db.count && SHA256.hash(data: da) == SHA256.hash(data: db)
     }
 
     /// Adds (`add = true`) or removes Finder tags, capturing exactly the tags
@@ -1436,7 +1465,35 @@ public enum ActionExecutor {
             if action.params[ActionParam.cleanFileName]?.boolValue == true {
                 newName = cleanFileName(newName)
             }
-            let target = ((path as NSString).deletingLastPathComponent as NSString).appendingPathComponent(newName)
+            let dir = (path as NSString).deletingLastPathComponent
+            let naiveTarget = (dir as NSString).appendingPathComponent(newName)
+            if naiveTarget != path, FileManager.default.fileExists(atPath: naiveTarget) {
+                if contentsMatch(path, naiveTarget) {
+                    let trashTarget = (try trashDir() as NSString).appendingPathComponent((path as NSString).lastPathComponent)
+                    return ActionPlan(
+                        kind: action.kind,
+                        description: "Identical copy of \((naiveTarget as NSString).lastPathComponent) — move to Trash",
+                        sourcePath: path,
+                        targetPath: trashTarget,
+                        status: .wouldRun,
+                        finalPath: trashTarget,
+                        copiedPath: nil,
+                        isTerminal: true
+                    )
+                }
+                let target = uniqueDest(dir: dir, fileName: newName)
+                return ActionPlan(
+                    kind: action.kind,
+                    description: "Rename to \((target as NSString).lastPathComponent)",
+                    sourcePath: path,
+                    targetPath: target,
+                    status: .wouldRun,
+                    finalPath: target,
+                    copiedPath: nil,
+                    isTerminal: false
+                )
+            }
+            let target = naiveTarget
             return ActionPlan(
                 kind: action.kind,
                 description: "Rename to \(newName)",

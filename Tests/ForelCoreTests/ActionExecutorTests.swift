@@ -342,6 +342,43 @@ import Foundation
         #expect(!FileManager.default.fileExists(atPath: (dir.path as NSString).appendingPathComponent("report-archived.txt.txt")))
     }
 
+    @Test func renameSuffixesWhenTargetNameAlreadyExists() throws {
+        let dir = TempDir()
+        _ = dir.file("2026-iptu.pdf", contents: "one")
+        let reDelivered = dir.file("iptu2026.pdf", contents: "genuinely different")
+
+        let applied = try ActionExecutor.execute(
+            makeAction(.rename, .object(["pattern": .string("2026-iptu.{extension}")])),
+            path: reDelivered
+        )
+
+        #expect((applied.newPath as NSString).lastPathComponent == "2026-iptu (1).pdf")
+        #expect(FileManager.default.fileExists(atPath: applied.newPath))
+        #expect(!FileManager.default.fileExists(atPath: reDelivered))
+    }
+
+    /// The duplicate IPTU scenario: the same download lands twice, the first
+    /// copy already renamed. Identical bytes converge on one file — the
+    /// redundant re-delivery goes to the Trash (undoable), instead of failing
+    /// and stranding the original in the watched folder.
+    @Test func renameMovesAnIdenticalRedeliveryToTrash() throws {
+        let dir = TempDir()
+        let existing = dir.file("2026-iptu.pdf", contents: "same bytes")
+        let reDelivered = dir.file("iptu2026.pdf", contents: "same bytes")
+        defer { try? FileManager.default.removeItem(atPath: reDelivered) }
+
+        let applied = try ActionExecutor.execute(
+            makeAction(.rename, .object(["pattern": .string("2026-iptu.{extension}")])),
+            path: reDelivered
+        )
+
+        #expect(applied.newPath.hasPrefix((NSHomeDirectory() as NSString).appendingPathComponent(".Trash")))
+        #expect(FileManager.default.fileExists(atPath: applied.newPath))
+        #expect(FileManager.default.fileExists(atPath: existing))
+        #expect(!FileManager.default.fileExists(atPath: (dir.path as NSString).appendingPathComponent("iptu2026.pdf")))
+        try? FileManager.default.removeItem(atPath: applied.newPath)
+    }
+
     @Test func renamePatternSupportsYearMonthDayTokens() throws {
         let dir = TempDir()
         let file = dir.file("report.txt", contents: "hello")
