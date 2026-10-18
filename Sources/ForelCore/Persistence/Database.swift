@@ -31,7 +31,7 @@ extension ISO8601DateFormatter {
 /// `~/Library/Application Support/com.lab421.forel/forel.db` (migrated
 /// automatically from the legacy `com.forel.app` location) keeps working.
 public final class Database: @unchecked Sendable {
-    public static let currentSchemaVersion: Int64 = 8
+    public static let currentSchemaVersion: Int64 = 9
 
     private let handle: OpaquePointer
     private let lock = NSLock()
@@ -496,7 +496,7 @@ public final class Database: @unchecked Sendable {
             )
         }
         for index in rules.indices {
-            rules[index].conditions = try listConditions(ruleId: rules[index].id)
+            rules[index].conditionGroups = try listConditionGroups(ruleId: rules[index].id)
             rules[index].actions = try listActions(ruleId: rules[index].id)
         }
         return rules
@@ -535,7 +535,9 @@ public final class Database: @unchecked Sendable {
             stmt.bind(8, rule.createdAt)
             try stmt.runToCompletion()
 
-            for condition in rule.conditions { try insertCondition(condition) }
+            for (position, group) in rule.conditionGroups.enumerated() {
+                try insertConditionGroup(group, ruleId: rule.id, position: position)
+            }
             for action in rule.actions { try insertAction(action) }
         }
     }
@@ -557,11 +559,17 @@ public final class Database: @unchecked Sendable {
             deleteConditions.bind(1, rule.id)
             try deleteConditions.runToCompletion()
 
+            let deleteGroups = try statement("DELETE FROM condition_groups WHERE rule_id=?1")
+            deleteGroups.bind(1, rule.id)
+            try deleteGroups.runToCompletion()
+
             let deleteActions = try statement("DELETE FROM actions WHERE rule_id=?1")
             deleteActions.bind(1, rule.id)
             try deleteActions.runToCompletion()
 
-            for condition in rule.conditions { try insertCondition(condition) }
+            for (position, group) in rule.conditionGroups.enumerated() {
+                try insertConditionGroup(group, ruleId: rule.id, position: position)
+            }
             for action in rule.actions { try insertAction(action) }
         }
     }
@@ -604,31 +612,63 @@ public final class Database: @unchecked Sendable {
 
     // MARK: - Conditions
 
-    private func listConditions(ruleId: String) throws -> [Condition] {
-        let stmt = try statement("SELECT id, rule_id, kind, operator, value FROM conditions WHERE rule_id=?1")
+    /// Groups in stored order, each with its conditions (insertion order,
+    /// matching the pre-groups behaviour).
+    private func listConditionGroups(ruleId: String) throws -> [ConditionGroup] {
+        let stmt = try statement(
+            """
+            SELECT cg.id, cg.match, c.id, c.rule_id, c.kind, c.operator, c.value
+            FROM condition_groups cg
+            LEFT JOIN conditions c ON c.group_id = cg.id
+            WHERE cg.rule_id=?1
+            ORDER BY cg.position, cg.rowid, c.rowid
+            """
+        )
         stmt.bind(1, ruleId)
-        var conditions: [Condition] = []
+        var groups: [ConditionGroup] = []
         while try stmt.step() {
-            conditions.append(
-                Condition(
-                    id: stmt.columnText(0),
-                    ruleId: stmt.columnText(1),
-                    kind: ConditionKind(dbValue: stmt.columnText(2)),
-                    operator: Operator(dbValue: stmt.columnText(3)),
-                    value: stmt.columnText(4)
+            let groupId = stmt.columnText(0)
+            let match = ConditionMatch(rawValue: stmt.columnText(1)) ?? .all
+            if groups.last?.id != groupId {
+                groups.append(ConditionGroup(id: groupId, match: match, conditions: []))
+            }
+            if stmt.columnTextOrNil(2) != nil {
+                groups[groups.count - 1].conditions.append(
+                    Condition(
+                        id: stmt.columnText(2),
+                        ruleId: stmt.columnText(3),
+                        kind: ConditionKind(dbValue: stmt.columnText(4)),
+                        operator: Operator(dbValue: stmt.columnText(5)),
+                        value: stmt.columnText(6)
+                    )
                 )
-            )
+            }
         }
-        return conditions
+        return groups
     }
 
-    private func insertCondition(_ condition: Condition) throws {
-        let stmt = try statement("INSERT INTO conditions (id, rule_id, kind, operator, value) VALUES (?1,?2,?3,?4,?5)")
+    private func insertConditionGroup(_ group: ConditionGroup, ruleId: String, position: Int) throws {
+        let stmt = try statement(
+            "INSERT INTO condition_groups (id, rule_id, position, match) VALUES (?1,?2,?3,?4)"
+        )
+        stmt.bind(1, group.id)
+        stmt.bind(2, ruleId)
+        stmt.bind(3, Int64(position))
+        stmt.bind(4, group.match.rawValue)
+        try stmt.runToCompletion()
+        for condition in group.conditions { try insertCondition(condition, groupId: group.id) }
+    }
+
+    private func insertCondition(_ condition: Condition, groupId: String? = nil) throws {
+        let stmt = try statement(
+            "INSERT INTO conditions (id, rule_id, kind, operator, value, group_id) VALUES (?1,?2,?3,?4,?5,?6)"
+        )
         stmt.bind(1, condition.id)
         stmt.bind(2, condition.ruleId)
         stmt.bind(3, condition.kind.rawValue)
         stmt.bind(4, condition.operator.rawValue)
         stmt.bind(5, condition.value)
+        stmt.bind(6, groupId)
         try stmt.runToCompletion()
     }
 

@@ -1063,3 +1063,131 @@ import Foundation
         }
     }
 }
+
+// MARK: - Condition groups
+
+@Test func mixedAllAndAnyGroupsCombineByRuleMatch() throws {
+    let dir = TempDir()
+    let file = dir.file("report.txt", contents: "invoice")
+
+    func mixedRule(_ ruleMatch: ConditionMatch) -> Rule {
+        makeRule(
+            name: "mixed",
+            conditionMatch: ruleMatch,
+            conditionGroups: [
+                ConditionGroup(match: .any, conditions: [
+                    makeCondition(.extension_, .is, "txt", ruleId: "g1"),
+                    makeCondition(.extension_, .is, "doc", ruleId: "g1"),
+                ]),
+                ConditionGroup(match: .all, conditions: [
+                    makeCondition(.name, .contains, "report", ruleId: "g2"),
+                    makeCondition(.contents, .contains, "invoice", ruleId: "g2"),
+                ]),
+            ],
+            actions: [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["Hit"])]))]
+        )
+    }
+
+    // Both groups match (pdf OR doc) AND (name AND contents).
+    #expect(RuleEngine.run(path: file, depth: 0, rules: [mixedRule(.all)], batchId: "b").matched == ["mixed"])
+    // Rule-level .any: the first group already matches, the expensive
+    // contents condition in the second group must not even need to agree.
+    #expect(RuleEngine.run(path: file, depth: 0, rules: [mixedRule(.any)], batchId: "b").matched == ["mixed"])
+    // Rule-level .none: with one matching group, the rule must not fire.
+    #expect(RuleEngine.run(path: file, depth: 0, rules: [mixedRule(.none)], batchId: "b").matched.isEmpty)
+}
+
+@Test func groupCombinationSeparatesMatchesFromNonMatches() throws {
+    let dir = TempDir()
+    let file = dir.file("photo.raw", contents: "raw")
+
+    let rule = makeRule(
+        name: "mixed",
+        conditionMatch: .all,
+        conditionGroups: [
+            ConditionGroup(match: .any, conditions: [
+                makeCondition(.extension_, .is, "jpg", ruleId: "g1"),
+                makeCondition(.extension_, .is, "raw", ruleId: "g1"),
+            ]),
+            ConditionGroup(match: .all, conditions: [
+                makeCondition(.sizeBytes, .greaterThan, "1 GB", ruleId: "g2"),
+            ]),
+        ],
+        actions: [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["Hit"])]))]
+    )
+
+    // First group matches (raw), second does not (file is tiny) — .all fails.
+    #expect(RuleEngine.run(path: file, depth: 0, rules: [rule], batchId: "b").matched.isEmpty)
+
+    // Flip the rule to .any: one matching group is enough.
+    var anyRule = rule
+    anyRule.conditionMatch = .any
+    #expect(RuleEngine.run(path: file, depth: 0, rules: [anyRule], batchId: "b").matched == ["mixed"])
+}
+
+@Test func emptyGroupIsVacuouslyTrueAndEmptyRuleStillMatches() throws {
+    let dir = TempDir()
+    let file = dir.file("note.txt", contents: "x")
+
+    // A rule whose only group is empty matches everything (legacy behaviour).
+    let emptyRule = makeRule(name: "catch-all", conditionMatch: .any, actions: [
+        makeAction(.addTag, .object([ActionParam.tags: .stringArray(["All"])])),
+    ])
+    #expect(RuleEngine.run(path: file, depth: 0, rules: [emptyRule], batchId: "b").matched == ["catch-all"])
+
+    // An .none rule with no conditions at all still matches everything.
+    let noneRule = makeRule(name: "none-empty", conditionMatch: .none, actions: [
+        makeAction(.addTag, .object([ActionParam.tags: .stringArray(["None"])])),
+    ])
+    #expect(RuleEngine.run(path: file, depth: 0, rules: [noneRule], batchId: "b").matched == ["none-empty"])
+
+    // An empty group beside a matching one does not block a .all rule.
+    let mixed = makeRule(
+        name: "mixed-empty",
+        conditionMatch: .all,
+        conditionGroups: [
+            ConditionGroup(match: .all, conditions: [makeCondition(.extension_, .is, "txt", ruleId: "g1")]),
+            ConditionGroup(match: .all, conditions: []),
+        ],
+        actions: [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["Hit"])]))]
+    )
+    #expect(RuleEngine.run(path: file, depth: 0, rules: [mixed], batchId: "b").matched == ["mixed-empty"])
+}
+
+@Test func dryRunPreviewCombinesGroupsLikeTheWatcherDoes() throws {
+    let dir = TempDir()
+    let matching = dir.file("report.txt", contents: "invoice")
+    let notMatching = dir.file("photo.raw", contents: "raw")
+
+    let rule = makeRule(
+        name: "mixed",
+        conditionMatch: .all,
+        conditionGroups: [
+            ConditionGroup(match: .any, conditions: [
+                makeCondition(.extension_, .is, "txt", ruleId: "g1"),
+                makeCondition(.extension_, .is, "doc", ruleId: "g1"),
+            ]),
+            ConditionGroup(match: .all, conditions: [
+                makeCondition(.contents, .contains, "invoice", ruleId: "g2"),
+            ]),
+        ],
+        actions: [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["Hit"])]))]
+    )
+
+    #expect(RuleEngine.previewFile(path: matching, depth: 0, rules: [rule])?.rules.map(\.ruleName) == ["mixed"])
+    #expect(RuleEngine.previewFile(path: notMatching, depth: 0, rules: [rule]) == nil)
+}
+
+@Test func legacyFlatConditionsKeepTheirSemanticsInsideOneGroup() throws {
+    let dir = TempDir()
+    let file = dir.file("report.doc", contents: "x")
+
+    // .any built the legacy way (flat conditions) still means "any of them".
+    let anyRule = makeRule(name: "legacy-any", conditionMatch: .any, conditions: [
+        makeCondition(.extension_, .is, "pdf", ruleId: "r"),
+        makeCondition(.extension_, .is, "doc", ruleId: "r"),
+    ], actions: [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["Hit"])]))])
+    #expect(anyRule.conditionGroups.count == 1)
+    #expect(anyRule.conditionGroups[0].match == .any)
+    #expect(RuleEngine.run(path: file, depth: 0, rules: [anyRule], batchId: "b").matched == ["legacy-any"])
+}
