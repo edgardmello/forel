@@ -187,6 +187,30 @@ private func writeTestImage(width: Int, height: Int, dateTaken: String? = nil, t
         #expect(!ConditionEvaluator.evaluate(makeCondition(.contents, .contains, "Total: 42"), path: file))
     }
 
+    /// Contents matching is case-insensitive (Finder/Spotlight convention):
+    /// documents routinely SHOUT names the rule types in Title Case.
+    @Test func contentsConditionMatchesCaseInsensitively() throws {
+        let dir = TempDir()
+        let file = dir.file("contract.txt", contents: "devidos à IMÓVEIS FERNANDA FREITAS, pessoa jurídica")
+
+        #expect(ConditionEvaluator.evaluate(makeCondition(.contents, .contains, "Fernanda Freitas"), path: file))
+        #expect(ConditionEvaluator.evaluate(makeCondition(.contents, .contains, "imóveis fernanda freitas"), path: file))
+        #expect(!ConditionEvaluator.evaluate(makeCondition(.contents, .doesNotContain, "FERNANDA freitas"), path: file))
+        #expect(ConditionEvaluator.evaluate(makeCondition(.contents, .doesNotContain, "Outra Corretora"), path: file))
+        #expect(ConditionEvaluator.evaluate(makeCondition(.contents, .endsWith, "freitas, pessoa jurídica"), path: file))
+    }
+
+    /// Regex conditions keep their own case rules — the pattern author
+    /// controls case inline with `(?i)`, pre-lowering would silently break
+    /// character classes like `[A-Z]`.
+    @Test func contentsConditionRegexKeepsItsOwnCaseRules() throws {
+        let dir = TempDir()
+        let file = dir.file("contract.txt", contents: "IMÓVEIS FERNANDA FREITAS")
+
+        #expect(!ConditionEvaluator.evaluate(makeCondition(.contents, .matchesRegex, "Fernanda Freitas"), path: file))
+        #expect(ConditionEvaluator.evaluate(makeCondition(.contents, .matchesRegex, #"(?i)fernanda\s+freitas"#), path: file))
+    }
+
     @Test func contentsConditionDoesNotMatchUnreadableOrOversizedContent() throws {
         let dir = TempDir()
         let binary = (dir.path as NSString).appendingPathComponent("binary.dat")

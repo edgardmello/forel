@@ -150,12 +150,18 @@ public enum ConditionEvaluator {
     /// Evaluates a `contents` condition, returning the match result together
     /// with which extraction strategy was used and any short reason. The Dry Run
     /// uses the extra detail to explain what was read; `evaluate` discards it.
+    /// Matching is case-insensitive (Finder/Spotlight convention — documents
+    /// routinely SHOUT names the rule types in Title Case); regex keeps its
+    /// own case rules, controllable inline with `(?i)`.
     /// When no text can be extracted every operator is `false`, so a rule never
     /// matches on content it could not read (including the negative operators).
     static func evaluateContents(_ condition: Condition, path: String) -> (matched: Bool, strategy: ContentStrategy, message: String?) {
         let result = ContentExtractor.extract(path: path)
         if let text = result.text {
-            return (matchString(condition.operator, text, condition.value), result.strategy, result.message)
+            if condition.operator == .matchesRegex {
+                return (matchString(.matchesRegex, text, condition.value), result.strategy, result.message)
+            }
+            return (matchString(condition.operator, text.lowercased(), condition.value.lowercased()), result.strategy, result.message)
         }
         // Nothing readable in-process. For formats macOS indexes but we can't
         // read directly (e.g. legacy .xls), fall back to Spotlight — which can
