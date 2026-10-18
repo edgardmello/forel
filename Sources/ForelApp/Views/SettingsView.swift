@@ -23,6 +23,8 @@ struct SettingsView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var updater: UpdaterManager
     @State private var launchAtLogin = LoginItem.isEnabled
+    @State private var hasLoadedLoginState = false
+    @State private var loginItemError: String?
     @State private var selectedCategory: SettingsCategory = .general
 
     var body: some View {
@@ -34,9 +36,12 @@ struct SettingsView: View {
         .frame(width: 600, height: 440)
         .background(ForelTheme.background)
         .navigationTitle("Settings")
-        .onAppear {
-            let storedLogin = (try? model.db.getSetting("launch_at_login")) ?? nil
-            launchAtLogin = LoginItem.isEnabled || storedLogin == "1"
+        .onAppear { refreshLaunchAtLoginState() }
+        .alert("Couldn't change Start at login", isPresented: loginItemErrorBinding) {
+            Button("Open Login Items Settings…") { LoginItem.openSystemSettings() }
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(loginItemError ?? "")
         }
     }
 
@@ -102,6 +107,9 @@ struct SettingsView: View {
                     subtitle: "Open Forel automatically when you log in",
                     isOn: launchAtLoginBinding
                 )
+                if let warning = loginItemWarning {
+                    LoginItemWarningRow(message: warning)
+                }
                 Divider().overlay(ForelTheme.divider).padding(.leading, 14)
                 ToggleRow(
                     title: "Show Dock icon",
@@ -217,13 +225,35 @@ struct SettingsView: View {
 
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(get: { launchAtLogin }, set: { enabled in
-            launchAtLogin = enabled
-            try? model.db.setSetting("launch_at_login", enabled ? "1" : "0")
-            // In a signed .app this registers/unregisters the login item; in an
-            // unsigned dev build it fails silently — the preference is still
-            // saved and applies once running from a packaged build.
-            LoginItem.setEnabled(enabled)
+            model.setWantsLaunchAtLogin(enabled)
+            if LoginItem.isPackagedApp, case .failure(let error) = LoginItem.setEnabled(enabled) {
+                loginItemError = "macOS refused the change: \(error.localizedDescription). You can try again, or review Forel under Login Items & Extensions in System Settings."
+            }
+            refreshLaunchAtLoginState()
         })
+    }
+
+    private var loginItemErrorBinding: Binding<Bool> {
+        Binding(get: { loginItemError != nil }, set: { if !$0 { loginItemError = nil } })
+    }
+
+    /// The toggle shows what macOS will actually do. In a bare dev build
+    /// (no packaged .app) registration isn't possible, so there it mirrors
+    /// the stored preference instead.
+    private func refreshLaunchAtLoginState() {
+        launchAtLogin = LoginItem.isPackagedApp ? LoginItem.isEnabled : model.wantsLaunchAtLogin
+        hasLoadedLoginState = true
+    }
+
+    /// Non-nil when the user wants to start at login but macOS currently
+    /// wouldn't launch Forel — the registration was lost (system updates and
+    /// cleaner utilities drop them) or is awaiting approval.
+    private var loginItemWarning: String? {
+        guard hasLoadedLoginState, LoginItem.isPackagedApp,
+              model.wantsLaunchAtLogin, !launchAtLogin else { return nil }
+        return LoginItem.requiresApproval
+            ? "macOS is waiting for your approval. Open Login Items & Extensions in System Settings and allow Forel."
+            : "Forel is set to start at login, but macOS has no active registration — a system update or cleaner app may have removed it. Turn this off and back on to fix it."
     }
 
     private var dockIconBinding: Binding<Bool> {
@@ -299,6 +329,28 @@ private enum SettingsCategory: CaseIterable, Identifiable {
         case .updates: Color(red: 0.20, green: 0.70, blue: 0.45)
         case .about: Color(red: 0.31, green: 0.55, blue: 0.95)
         }
+    }
+}
+
+private struct LoginItemWarningRow: View {
+    let message: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundStyle(ForelTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open Login Items Settings…") { LoginItem.openSystemSettings() }
+                    .font(.system(size: 11))
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
     }
 }
 

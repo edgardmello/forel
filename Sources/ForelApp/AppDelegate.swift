@@ -48,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.applyDockIconPreference()
         setUpStatusBar()
         showMainWindowOnFirstLaunch()
+        repairLoginItemRegistrationIfNeeded()
     }
 
     /// Called whenever `ContentView` lands in a window — at launch, or later
@@ -82,8 +83,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// (and its own `launch_at_login` setting) stays the single source of
     /// truth from here on; this only seeds it once.
     private func enableLaunchAtLoginByDefault() {
+        model?.setWantsLaunchAtLogin(true)
+    }
+
+    /// macOS can silently drop the login-item registration — system updates
+    /// migrate its background-task database, and cleaner utilities remove
+    /// entries from it. If the user wants to start at login but macOS has no
+    /// active registration, re-register; if even that fails, Settings shows
+    /// a warning under the toggle instead of letting it silently report on.
+    private func repairLoginItemRegistrationIfNeeded() {
         guard let model else { return }
-        try? model.db.setSetting("launch_at_login", "1")
+        guard model.wantsLaunchAtLogin, LoginItem.isPackagedApp, !LoginItem.isEnabled else { return }
         LoginItem.setEnabled(true)
     }
 

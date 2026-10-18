@@ -19,13 +19,30 @@ import ServiceManagement
 
 /// Wraps `SMAppService.mainApp` for the "Start at login" preference.
 ///
-/// In an unsigned dev build (a bare executable rather than a packaged `.app`),
-/// `SMAppService` registration throws. Callers persist the user's intent
-/// regardless, so the preference applies once the app runs from a signed
-/// bundle.
+/// The user's *intent* lives in the database (`launch_at_login`); this type
+/// only talks to macOS. In a bare dev build (no packaged `.app`) registration
+/// isn't possible, so callers persist the intent regardless and it applies
+/// once the app runs from a bundle.
+///
+/// macOS can silently lose the registration — system updates migrate the
+/// background-task database and cleaner utilities remove entries from it —
+/// so intent and OS state are reconciled at launch, and Settings warns when
+/// they disagree instead of showing a toggle that lies.
 enum LoginItem {
+    /// Whether Forel runs from a packaged `.app` bundle. Only then can
+    /// `SMAppService` register anything; a bare dev executable always fails.
+    static var isPackagedApp: Bool {
+        Bundle.main.bundleURL.pathExtension == "app"
+    }
+
     static var isEnabled: Bool {
         SMAppService.mainApp.status == .enabled
+    }
+
+    /// Registration succeeded but macOS is waiting for the user to allow
+    /// Forel under Login Items in System Settings.
+    static var requiresApproval: Bool {
+        SMAppService.mainApp.status == .requiresApproval
     }
 
     @discardableResult
@@ -43,5 +60,11 @@ enum LoginItem {
         } catch {
             return .failure(error)
         }
+    }
+
+    /// Drops the user into System Settings' Login Items pane, where a
+    /// `.requiresApproval` registration can be allowed.
+    static func openSystemSettings() {
+        SMAppService.openSystemSettingsLoginItems()
     }
 }

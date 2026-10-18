@@ -57,6 +57,7 @@ final class AppModel: ObservableObject {
     @Published var accentPreset: AccentPreset = .default
     @Published var showDockIcon: Bool = true
     @Published var showMenuBarIcon: Bool = true
+    @Published var wantsLaunchAtLogin = false
     @Published var watcherNotificationsEnabled: Bool = true
     @Published var historyMaxDays: Int = 30
     /// Bumped whenever the accent colour changes, so views can force a full
@@ -132,6 +133,9 @@ final class AppModel: ObservableObject {
 
         let storedShowMenuBarIcon = db.withLock { db in try? db.getSetting("show_menu_bar_icon") }
         self.showMenuBarIcon = storedShowMenuBarIcon.map { $0 == "1" } ?? true
+
+        let storedLaunchAtLogin = db.withLock { db in try? db.getSetting("launch_at_login") }
+        self.wantsLaunchAtLogin = storedLaunchAtLogin == "1"
 
         let storedWatcherNotificationsEnabled = db.withLock { db in try? db.getSetting("watcher_notifications_enabled") }
         self.watcherNotificationsEnabled = storedWatcherNotificationsEnabled.map { $0 == "1" } ?? true
@@ -241,6 +245,11 @@ final class AppModel: ObservableObject {
     func setShowMenuBarIcon(_ enabled: Bool) {
         showMenuBarIcon = enabled
         db.withLock { db in try? db.setSetting("show_menu_bar_icon", enabled ? "1" : "0") }
+    }
+
+    func setWantsLaunchAtLogin(_ enabled: Bool) {
+        wantsLaunchAtLogin = enabled
+        db.withLock { db in try? db.setSetting("launch_at_login", enabled ? "1" : "0") }
     }
 
     func setWatcherNotificationsEnabled(_ enabled: Bool) {

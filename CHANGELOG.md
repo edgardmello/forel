@@ -28,6 +28,7 @@ All notable changes to Forel are documented here. Format loosely follows
 - Settings → About now shows the version, build, copyright, and repository link, matching the About Forel window.
 
 ### Fixed
+- Forel now re-registers itself to start at login when macOS loses the registration (a system update or cleaner app can remove it), and Settings warns with a fix instead of showing the toggle as on when Forel isn't actually set to launch.
 - The menu bar icon now appears when Forel starts at login, without having to reopen the app.
 - Run Now no longer reports failed actions as applied: its result now counts applied, failed, skipped, and pending actions separately.
 - Dry Run now warns when a Move or Copy destination can't be reached or written to, such as a disconnected disk or network share.
