@@ -314,8 +314,9 @@ import Foundation
     }
 
     /// Dry Run and the editor's Test must announce how a rename converges
-    /// when the target name is taken: identical re-deliveries show the Trash
-    /// plan, different content shows the resolved " (N)" name.
+    /// when the target name is taken: identical re-deliveries (including
+    /// re-prints — same text, different bytes) show the Trash plan, and
+    /// different content shows the resolved " (N)" name.
     @Test func previewRenameResolvesTargetCollisions() throws {
         let dir = TempDir()
         _ = dir.file("2026-iptu.pdf", contents: "one")

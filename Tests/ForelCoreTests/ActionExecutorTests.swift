@@ -379,6 +379,28 @@ import Foundation
         try? FileManager.default.removeItem(atPath: applied.newPath)
     }
 
+    /// A re-printed document — the portal regenerates the PDF on every
+    /// download, so the same IPTU arrives with different bytes but identical
+    /// text. Same document converges on one file even though the hashes
+    /// differ.
+    @Test func renameMovesAReprintedDocumentToTrash() throws {
+        let dir = TempDir()
+        let existing = dir.file("2026-iptu.pdf")
+        let reprinted = dir.file("iptu2026.pdf")
+        makeTextPDF(at: existing, text: "2.038.592-8 00 MARIA TEREZA\nCOTA ÚNICA - IPTU 2026", fontSize: 11)
+        makeTextPDF(at: reprinted, text: "2.038.592-8 00 MARIA TEREZA\nCOTA ÚNICA - IPTU 2026", fontSize: 24)
+        #expect(try Data(contentsOf: URL(fileURLWithPath: existing)) != Data(contentsOf: URL(fileURLWithPath: reprinted)))
+
+        let applied = try ActionExecutor.execute(
+            makeAction(.rename, .object(["pattern": .string("2026-iptu.{extension}")])),
+            path: reprinted
+        )
+
+        #expect(applied.newPath.hasPrefix((NSHomeDirectory() as NSString).appendingPathComponent(".Trash")))
+        #expect(FileManager.default.fileExists(atPath: existing))
+        try? FileManager.default.removeItem(atPath: applied.newPath)
+    }
+
     @Test func renamePatternSupportsYearMonthDayTokens() throws {
         let dir = TempDir()
         let file = dir.file("report.txt", contents: "hello")

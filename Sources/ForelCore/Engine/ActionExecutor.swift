@@ -541,13 +541,13 @@ public enum ActionExecutor {
             try FileManager.default.moveItem(atPath: path, toPath: naiveDest)
             return Applied(newPath: naiveDest, undo: .move(from: path, to: naiveDest))
         }
-        // The target name is taken. When the arrival is byte-identical to
-        // the file already at that name, it's a redundant re-delivery
-        // (browsers and messengers writing the same download twice) —
-        // converge on the one copy by trashing the duplicate, undoable like
-        // any move. Genuinely different content keeps both files, with the
-        // same " (N)" suffix Finder and Move use.
-        if contentsMatch(path, naiveDest) {
+        // The target name is taken. When the arrival is the same document
+        // as the file already at that name, it's a redundant re-delivery
+        // (a messenger re-send, or the portal re-printing the PDF — same
+        // text, different bytes) — converge on the one copy by trashing the
+        // duplicate, undoable like any move. Genuinely different content
+        // keeps both files, with the same " (N)" suffix Finder and Move use.
+        if sameDocument(path, naiveDest) {
             let trashed = uniqueDest(dir: try trashDir(), fileName: (path as NSString).lastPathComponent)
             try FileManager.default.moveItem(atPath: path, toPath: trashed)
             return Applied(newPath: trashed, undo: .move(from: path, to: trashed))
@@ -557,10 +557,31 @@ public enum ActionExecutor {
         return Applied(newPath: dest, undo: .move(from: path, to: dest))
     }
 
-    /// True when two files hold identical bytes — size first as a cheap
-    /// reject, then SHA-256, so the "same download delivered twice" path
-    /// never trashes a file that merely shares the target's name and size.
-    private static func contentsMatch(_ a: String, _ b: String) -> Bool {
+    /// True when two files hold the same document. Text-bearing formats
+    /// compare their extracted text — a re-printed PDF differs in bytes but
+    /// not in content — and everything else (or text that can't be read)
+    /// falls back to byte equality: size first as a cheap reject, then
+    /// SHA-256, so the "same download delivered twice" path never trashes
+    /// a file that merely shares the target's name and size.
+    private static func sameDocument(_ a: String, _ b: String) -> Bool {
+        let ta = ContentExtractor.extract(path: a).text
+        let tb = ContentExtractor.extract(path: b).text
+        if let ta, let tb, !ta.isEmpty, !tb.isEmpty {
+            return normalizedText(ta) == normalizedText(tb)
+        }
+        return bytesMatch(a, b)
+    }
+
+    /// Line-trimmed, blank-dropped text: PDFKit's extraction can differ in
+    /// wrapping and padding between two prints of the same document.
+    private static func normalizedText(_ t: String) -> String {
+        t.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
+    private static func bytesMatch(_ a: String, _ b: String) -> Bool {
         guard
             let da = try? Data(contentsOf: URL(fileURLWithPath: a), options: .mappedIfSafe),
             let db = try? Data(contentsOf: URL(fileURLWithPath: b), options: .mappedIfSafe)
@@ -1468,7 +1489,7 @@ public enum ActionExecutor {
             let dir = (path as NSString).deletingLastPathComponent
             let naiveTarget = (dir as NSString).appendingPathComponent(newName)
             if naiveTarget != path, FileManager.default.fileExists(atPath: naiveTarget) {
-                if contentsMatch(path, naiveTarget) {
+                if sameDocument(path, naiveTarget) {
                     let trashTarget = (try trashDir() as NSString).appendingPathComponent((path as NSString).lastPathComponent)
                     return ActionPlan(
                         kind: action.kind,
