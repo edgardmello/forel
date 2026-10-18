@@ -28,6 +28,7 @@ struct RuleEditorView: View {
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var draggedActionId: String?
     @State private var actionInsertionIndex: Int?
+    @State private var hasTestedRule = false
     @EnvironmentObject private var model: AppModel
     private let preferredHeight: CGFloat
     let onSave: (Rule) -> Void
@@ -186,6 +187,10 @@ struct RuleEditorView: View {
             }
             .scrollIndicators(.never)
 
+            if hasTestedRule {
+                RuleTestPanel(result: model.ruleTestResult, isTesting: model.isTestingRule)
+            }
+
             Divider().overlay(ForelTheme.divider)
 
             HStack {
@@ -197,16 +202,13 @@ struct RuleEditorView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(ForelTheme.primaryText)
                 Spacer()
+                Button("Test", action: runDryRun)
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(model.isTestingRule || rule.name.trimmingCharacters(in: .whitespaces).isEmpty)
                 Button("Cancel", action: onCancel).buttonStyle(SecondaryButtonStyle())
                 Button("Save") {
                     if hasValidationErrors {
-                        showValidationErrors = true
-                        errorDismissTask?.cancel()
-                        errorDismissTask = Task {
-                            try? await Task.sleep(for: .seconds(5))
-                            guard !Task.isCancelled else { return }
-                            showValidationErrors = false
-                        }
+                        revealValidationErrors()
                     } else {
                         showValidationErrors = false
                         errorDismissTask?.cancel()
@@ -222,6 +224,30 @@ struct RuleEditorView: View {
         .frame(width: 880, height: preferredHeight)
         .background(ForelTheme.background)
         .background(WindowActivationBridge(showsDockIcon: model.showDockIcon))
+        .onDisappear { model.cancelRuleTest() }
+    }
+
+    /// Dry-runs the draft as it stands in the editor (see
+    /// `AppModel.testRule`). A rule that wouldn't pass validation can't be
+    /// meaningfully tested, so invalid drafts surface the same banner Save
+    /// shows instead.
+    private func runDryRun() {
+        if hasValidationErrors {
+            revealValidationErrors()
+            return
+        }
+        hasTestedRule = true
+        model.testRule(rule)
+    }
+
+    private func revealValidationErrors() {
+        showValidationErrors = true
+        errorDismissTask?.cancel()
+        errorDismissTask = Task {
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
+            showValidationErrors = false
+        }
     }
 
     private var conditionIssues: [RuleValidator.Issue] {

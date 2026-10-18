@@ -444,6 +444,59 @@ import Foundation
         #expect(preview?.rules[0].actions.isEmpty == true)
     }
 
+    /// The editor's rule test asks `includeNonMatches` so a rule that
+    /// matches nothing can still be diagnosed: the file comes back with the
+    /// failing conditions' breakdown, flagged `matched: false` and no
+    /// planned actions. Without the flag, callers keep getting nil.
+    @Test func previewFileExplainsNonMatchesOnlyWhenAsked() throws {
+        let dir = TempDir()
+        let file = dir.file("receipt.txt", contents: "x")
+        let rule = makeRule(
+            name: "pdf only",
+            conditions: [makeCondition(.extension_, .is, "pdf")],
+            actions: [makeAction(.addTag, .object(["tag": .string("Reviewed")]))]
+        )
+
+        #expect(RuleEngine.previewFile(path: file, depth: 0, rules: [rule]) == nil)
+
+        let breakdown = try #require(RuleEngine.previewFile(path: file, depth: 0, rules: [rule], includeNonMatches: true))
+        #expect(breakdown.rules.count == 1)
+        #expect(breakdown.rules[0].matched == false)
+        #expect(breakdown.rules[0].conditions.map(\.matched) == [false])
+        #expect(breakdown.rules[0].actions.isEmpty == true)
+    }
+
+    @Test func previewFileIncludeNonMatchesLeavesMatchesUnchanged() throws {
+        let dir = TempDir()
+        let file = dir.file("invoice.pdf", contents: "paid")
+        let rule = makeRule(
+            name: "review invoices",
+            conditions: [makeCondition(.extension_, .is, "pdf")],
+            actions: [makeAction(.addTag, .object(["tag": .string("Reviewed")]))]
+        )
+
+        let preview = try #require(RuleEngine.previewFile(path: file, depth: 0, rules: [rule], includeNonMatches: true))
+
+        #expect(preview.rules[0].matched == true)
+        #expect(preview.rules[0].conditions.map(\.matched) == [true])
+        #expect(preview.rules[0].actions.map(\.status) == [.wouldRun])
+    }
+
+    /// Out-of-scope and disabled rules are skipped before conditions are
+    /// ever evaluated, so they stay invisible in non-match breakdowns too —
+    /// only condition failures are diagnosable.
+    @Test func previewFileNonMatchBreakdownIgnoresOutOfScopeRules() throws {
+        let dir = TempDir()
+        let file = dir.file("deep.txt", contents: "x")
+        var rule = makeRule(
+            name: "top level only",
+            conditions: [makeCondition(.extension_, .is, "txt")]
+        )
+        rule.recursionDepth = 0
+
+        #expect(RuleEngine.previewFile(path: file, depth: 1, rules: [rule], includeNonMatches: true) == nil)
+    }
+
     /// `moveToFolder` resolves a same-name conflict itself (default: rename
     /// the incoming file) rather than blocking, so Dry Run shows the actual
     /// destination Run Now/the watcher will use — no `(1)`-suffixed surprise

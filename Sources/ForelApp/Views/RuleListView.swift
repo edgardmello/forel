@@ -692,90 +692,7 @@ private struct PreviewSheet: View {
                     }
 
                     ForEach(result.matches, id: \.path) { match in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "doc.fill").font(.system(size: 11)).foregroundStyle(ForelTheme.accent)
-                                Text(match.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(ForelTheme.primaryText)
-                            }
-                            Text(match.path)
-                                .font(.system(size: 10))
-                                .foregroundStyle(ForelTheme.secondaryText)
-                                .lineLimit(1)
-                                .truncationMode(.head)
-                            ForEach(match.rules, id: \.ruleId) { rulePreview in
-                                Text(rulePreview.ruleName)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(ForelTheme.secondaryText)
-                                ForEach(Array(rulePreview.conditions.enumerated()), id: \.offset) { _, condition in
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        HStack(spacing: 6) {
-                                            Image(systemName: condition.matched ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                                .font(.system(size: 9))
-                                                .foregroundStyle(condition.matched ? ForelTheme.accent : .red.opacity(0.85))
-                                            Text(condition.label)
-                                                .font(.system(size: 11))
-                                                .foregroundStyle(ForelTheme.secondaryText)
-                                                .lineLimit(1)
-                                        }
-                                        if let detail = condition.detail {
-                                            Text(detail)
-                                                .font(.system(size: 10))
-                                                .foregroundStyle(ForelTheme.secondaryText)
-                                                .lineLimit(1)
-                                                .padding(.leading, 15)
-                                        }
-                                    }
-                                    .padding(.leading, 6)
-                                }
-                                if rulePreview.actions.isEmpty {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "info.circle")
-                                            .font(.system(size: 9))
-                                            .foregroundStyle(ForelTheme.secondaryText)
-                                        Text("No actions configured for this rule.")
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(ForelTheme.secondaryText)
-                                    }
-                                    .padding(.leading, 6)
-                                } else {
-                                    ForEach(rulePreview.actions, id: \.self) { action in
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            HStack(spacing: 6) {
-                                                Image(systemName: action.statusIcon)
-                                                    .font(.system(size: 9))
-                                                    .foregroundStyle(action.statusColor)
-                                                Text(action.description)
-                                                    .font(.system(size: 11))
-                                                    .foregroundStyle(ForelTheme.primaryText)
-                                                Text(action.statusLabel)
-                                                    .font(.system(size: 10, weight: .medium))
-                                                    .foregroundStyle(action.statusColor)
-                                                    .padding(.horizontal, 6)
-                                                    .padding(.vertical, 2)
-                                                    .background(Capsule().fill(action.statusColor.opacity(0.12)))
-                                            }
-                                            if let targetPath = action.targetPath {
-                                                Text("\((action.sourcePath as NSString).lastPathComponent) -> \((targetPath as NSString).lastPathComponent)")
-                                                    .font(.system(size: 10))
-                                                    .foregroundStyle(ForelTheme.secondaryText)
-                                            }
-                                            if let warning = action.warning {
-                                                Text(warning)
-                                                    .font(.system(size: 10))
-                                                    .foregroundStyle(.orange)
-                                                    .fixedSize(horizontal: false, vertical: true)
-                                                    .textSelection(.enabled)
-                                            }
-                                        }
-                                        .padding(.leading, 6)
-                                    }
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(ForelTheme.surface))
-                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(ForelTheme.surfaceBorder))
+                        FilePreviewRow(match: match)
                     }
 
                     if result.matches.isEmpty {
@@ -798,43 +715,5 @@ private struct PreviewSheet: View {
         .padding(16)
         .frame(width: 860, height: 680)
         .background(ForelTheme.background)
-    }
-}
-
-private extension ConditionPreview {
-    var label: String {
-        "\(kind.label) \(`operator_`.label) \(value)"
-    }
-}
-
-private extension ActionPreview {
-    var statusLabel: String {
-        if warning != nil { return "Likely to fail" }
-        switch status {
-        case .wouldRun: return "Would run"
-        case .wouldSkip: return "Would skip"
-        case .blockedByConflict: return "Blocked by conflict"
-        case .needsConfirmation: return "Needs confirmation"
-        }
-    }
-
-    var statusIcon: String {
-        if warning != nil { return "exclamationmark.triangle.fill" }
-        switch status {
-        case .wouldRun: return "arrow.turn.down.right"
-        case .wouldSkip: return "minus.circle"
-        case .blockedByConflict: return "exclamationmark.triangle.fill"
-        case .needsConfirmation: return "questionmark.circle.fill"
-        }
-    }
-
-    @MainActor var statusColor: Color {
-        if warning != nil { return .orange }
-        switch status {
-        case .wouldRun: return ForelTheme.accent
-        case .wouldSkip: return ForelTheme.secondaryText
-        case .blockedByConflict: return .orange
-        case .needsConfirmation: return .purple
-        }
     }
 }

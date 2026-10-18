@@ -6,6 +6,8 @@ All notable changes to Forel are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- Rules can now be tested while being edited: a Test button in the editor dry-runs the current draft against the watched folder, showing matched files, how each condition evaluated, and what each action would do — no save needed.
+- When a tested rule matches nothing, the editor now explains why: sample files are listed with each condition's pass/fail result.
 - Rules can now be imported and exported as `.forelrules` files named after their watched folder, and Hazel exports can be migrated with unsupported parts clearly flagged for review.
 - Rules can now mix "match all" and "match any" in one rule by grouping conditions: each group matches all or any of its conditions, and the rule matches all, any, or none of the groups. Existing rules keep working unchanged.
 - Right-clicking a watched folder in the sidebar now offers Show in Finder.

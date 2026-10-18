@@ -69,6 +69,12 @@ final class AppModel: ObservableObject {
     private var runNowMessageId: UUID?
     @Published private(set) var isPreviewing = false
     @Published var previewResult: PreviewResult?
+    /// Dry-run of the draft rule open in the rule editor, driven by
+    /// `testRule(_:)` — separate from the folder-wide Dry Run state above.
+    @Published private(set) var isTestingRule = false
+    @Published var ruleTestResult: PreviewResult?
+    private var ruleTestTask: Task<PreviewResult, Never>?
+    private var ruleTestGeneration = 0
     @Published var showHazelImportAssistant = false
     @Published private var ruleExpansionPreferences = RuleExpansionPreferences()
 
@@ -76,6 +82,7 @@ final class AppModel: ObservableObject {
     private let coordinator: WatcherCoordinator
     private let historyPageSize = 200
     private let previewMatchLimit = 500
+    private let ruleTestNonMatchSampleLimit = 5
     private let ruleRunStatsWindowDays = 30
     private var historyCleanupTimer: AnyCancellable?
     private var pendingWatcherNotification = PendingWatcherNotification()
@@ -746,6 +753,83 @@ final class AppModel: ObservableObject {
                 )
             }.value
         }
+    }
+
+    /// Dry-runs a single rule draft inside the rule editor, off the main
+    /// thread. Unlike `preview()` this tests the unsaved draft as it stands
+    /// in the editor — not the folder's saved, enabled rules — so conditions
+    /// and actions can be iterated on before committing. The draft is tested
+    /// alone, so matches show what *this* rule would do, unaffected by other
+    /// rules' chains or conflicts. Disabled drafts are tested as if enabled:
+    /// that flag only gates automatic execution. When nothing matches, a
+    /// sample of non-matching files with the failing conditions' breakdown
+    /// is collected so the editor can show *why* they didn't match.
+    func testRule(_ draft: Rule) {
+        guard !isTestingRule else { return }
+        guard let folder = folders.first(where: { $0.id == draft.folderId }) else {
+            ruleTestResult = PreviewResult(filesScanned: 0, matches: [])
+            return
+        }
+        var testable = draft
+        testable.enabled = true
+        let matchLimit = previewMatchLimit
+        let nonMatchLimit = ruleTestNonMatchSampleLimit
+        ruleTestGeneration += 1
+        let generation = ruleTestGeneration
+        isTestingRule = true
+        let scan = Task.detached(priority: .userInitiated) {
+            let maxDepth = RuleEngine.maxRuleDepth([testable])
+            var filesScanned = 0
+            var matches: [FilePreview] = []
+            var nonMatches: [FilePreview] = []
+            var reachedMatchLimit = false
+            var reachedNonMatchLimit = false
+            RuleEngine.forEachEntry(root: folder.path, maxDepth: maxDepth) { entry in
+                guard !Task.isCancelled else { return }
+                filesScanned += 1
+                guard let match = RuleEngine.previewFile(path: entry.path, depth: entry.depth, rules: [testable], includeNonMatches: true) else {
+                    return
+                }
+                if match.rules.first?.matched == false {
+                    if nonMatches.count < nonMatchLimit {
+                        nonMatches.append(match)
+                    } else {
+                        reachedNonMatchLimit = true
+                    }
+                    return
+                }
+                if matches.count < matchLimit {
+                    matches.append(match)
+                } else {
+                    reachedMatchLimit = true
+                }
+            }
+            return PreviewResult(
+                filesScanned: filesScanned,
+                matches: matches,
+                matchLimit: matchLimit,
+                reachedMatchLimit: reachedMatchLimit,
+                nonMatches: nonMatches,
+                reachedNonMatchLimit: reachedNonMatchLimit
+            )
+        }
+        ruleTestTask = scan
+        Task {
+            let result = await scan.value
+            // A newer test (or a cancel) superseded this scan — drop it.
+            guard generation == ruleTestGeneration else { return }
+            isTestingRule = false
+            ruleTestResult = result
+        }
+    }
+
+    /// Stops an in-flight editor dry-run — e.g. the editor sheet closed —
+    /// and ignores whatever it would still publish.
+    func cancelRuleTest() {
+        ruleTestGeneration += 1
+        ruleTestTask?.cancel()
+        ruleTestTask = nil
+        isTestingRule = false
     }
 
     /// The enabled rules and watched root currently covering `path`, if

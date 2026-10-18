@@ -31,12 +31,17 @@ public struct RulePreview: Sendable {
     public let ruleName: String
     public let conditions: [ConditionPreview]
     public let actions: [ActionPreview]
+    /// False when this entry is a diagnostic breakdown for a rule whose
+    /// conditions failed on the file (`previewFile(includeNonMatches:)`);
+    /// `actions` is empty then — the rule never planned anything.
+    public let matched: Bool
 
-    public init(ruleId: String, ruleName: String, conditions: [ConditionPreview], actions: [ActionPreview]) {
+    public init(ruleId: String, ruleName: String, conditions: [ConditionPreview], actions: [ActionPreview], matched: Bool = true) {
         self.ruleId = ruleId
         self.ruleName = ruleName
         self.conditions = conditions
         self.actions = actions
+        self.matched = matched
     }
 }
 
@@ -94,12 +99,19 @@ public struct PreviewResult: Sendable {
     public let matches: [FilePreview]
     public let matchLimit: Int?
     public let reachedMatchLimit: Bool
+    /// Sample of files that matched no rule, each with the failing
+    /// conditions' breakdown — filled only by the rule editor's single-rule
+    /// test (`includeNonMatches`), never by the folder-wide Dry Run.
+    public let nonMatches: [FilePreview]
+    public let reachedNonMatchLimit: Bool
 
-    public init(filesScanned: Int, matches: [FilePreview], matchLimit: Int? = nil, reachedMatchLimit: Bool = false) {
+    public init(filesScanned: Int, matches: [FilePreview], matchLimit: Int? = nil, reachedMatchLimit: Bool = false, nonMatches: [FilePreview] = [], reachedNonMatchLimit: Bool = false) {
         self.filesScanned = filesScanned
         self.matches = matches
         self.matchLimit = matchLimit
         self.reachedMatchLimit = reachedMatchLimit
+        self.nonMatches = nonMatches
+        self.reachedNonMatchLimit = reachedNonMatchLimit
     }
 }
 
@@ -204,7 +216,12 @@ public enum RuleEngine {
         return (matched, history)
     }
 
-    public static func previewFile(path: String, depth: Int, rules: [Rule], root: String? = nil) -> FilePreview? {
+    /// - Parameter includeNonMatches: when true, a file no rule matched still
+    ///   returns a breakdown of why the original path failed each rule's
+    ///   conditions (`matched: false`, no planned actions). Rules skipped for
+    ///   scope or being disabled stay invisible, and system/busy files still
+    ///   return nil — only condition failures are diagnosable.
+    public static func previewFile(path: String, depth: Int, rules: [Rule], root: String? = nil, includeNonMatches: Bool = false) -> FilePreview? {
         guard !SystemFileFilter.isExcluded((path as NSString).lastPathComponent), !FileReadiness.isMarkedBusy(path) else {
             return nil
         }
@@ -217,6 +234,7 @@ public enum RuleEngine {
         }
 
         var matchedRules: [RulePreview] = []
+        var failedRules: [RulePreview] = []
         var pending = [PendingFile(path: path, depth: depth, startRuleIndex: 0, blockedRuleIds: [])]
         var checkedBusyContents = false
 
@@ -239,7 +257,22 @@ public enum RuleEngine {
                     let groupResults = rule.conditionGroups.map { group in
                         conditionResultsMatch(group.conditions.compactMap { matchedById[$0.id] }, group.match)
                     }
-                    guard conditionResultsMatch(groupResults, rule.conditionMatch) else { continue }
+                    guard conditionResultsMatch(groupResults, rule.conditionMatch) else {
+                        // Chained copies (from earlier rules' actions) are
+                        // follow-on files, not the thing being diagnosed.
+                        if includeNonMatches, target.path == path {
+                            failedRules.append(
+                                RulePreview(
+                                    ruleId: rule.id,
+                                    ruleName: rule.name,
+                                    conditions: conditions,
+                                    actions: [],
+                                    matched: false
+                                )
+                            )
+                        }
+                        continue
+                    }
                 }
                 if !checkedBusyContents {
                     checkedBusyContents = true
@@ -292,7 +325,10 @@ public enum RuleEngine {
             }
         }
 
-        guard !matchedRules.isEmpty else { return nil }
+        guard !matchedRules.isEmpty else {
+            guard includeNonMatches, !failedRules.isEmpty else { return nil }
+            return FilePreview(path: path, name: (path as NSString).lastPathComponent, rules: failedRules)
+        }
         return FilePreview(path: path, name: (path as NSString).lastPathComponent, rules: matchedRules)
     }
 
