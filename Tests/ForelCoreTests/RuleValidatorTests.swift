@@ -196,3 +196,12 @@ import Foundation
         #expect(RuleValidator.validate(actions) == [.init(message: "Rename pattern cannot be empty")])
     }
 }
+
+@Test func multiGroupRulesNeedAtLeastOneConditionPerGroup() {
+    let filled = ConditionGroup(match: .any, conditions: [makeCondition(.extension_, .is, "pdf")])
+    let empty = ConditionGroup(match: .all, conditions: [])
+
+    #expect(RuleValidator.validate(groups: [filled]).isEmpty)
+    #expect(RuleValidator.validate(groups: [empty]).isEmpty)
+    #expect(!RuleValidator.validate(groups: [filled, empty]).isEmpty)
+}

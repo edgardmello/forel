@@ -248,6 +248,49 @@ public struct Rule: Codable, Equatable, Sendable {
     public var priority: Int64
     public var createdAt: String
 
+    private enum CodingKeys: String, CodingKey {
+        case id, folderId = "folderId", name, enabled, conditionMatch, recursionDepth = "recursionDepth"
+        case conditions, conditionGroups = "conditionGroups", actions, priority, createdAt
+    }
+
+    /// Decodes both the grouped format and the pre-groups flat format
+    /// (`conditions` + `conditionMatch`), so exports from older versions
+    /// keep importing.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        folderId = try c.decode(String.self, forKey: .folderId)
+        name = try c.decode(String.self, forKey: .name)
+        enabled = try c.decode(Bool.self, forKey: .enabled)
+        conditionMatch = try c.decodeIfPresent(ConditionMatch.self, forKey: .conditionMatch) ?? .all
+        recursionDepth = try c.decodeIfPresent(Int64.self, forKey: .recursionDepth)
+        if let groups = try c.decodeIfPresent([ConditionGroup].self, forKey: .conditionGroups) {
+            conditionGroups = groups
+        } else {
+            let legacy = try c.decodeIfPresent([Condition].self, forKey: .conditions) ?? []
+            conditionGroups = [ConditionGroup(match: conditionMatch.groupDefault, conditions: legacy)]
+        }
+        actions = try c.decodeIfPresent([Action].self, forKey: .actions) ?? []
+        priority = try c.decodeIfPresent(Int64.self, forKey: .priority) ?? 0
+        createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt) ?? ISO8601DateFormatter.forelUTC.string(from: Date())
+    }
+
+    /// Encodes the grouped format only; the flat `conditions` key exists for
+    /// decoding legacy exports.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(folderId, forKey: .folderId)
+        try c.encode(name, forKey: .name)
+        try c.encode(enabled, forKey: .enabled)
+        try c.encode(conditionMatch, forKey: .conditionMatch)
+        try c.encode(recursionDepth, forKey: .recursionDepth)
+        try c.encode(conditionGroups, forKey: .conditionGroups)
+        try c.encode(actions, forKey: .actions)
+        try c.encode(priority, forKey: .priority)
+        try c.encode(createdAt, forKey: .createdAt)
+    }
+
     /// Flat projection of every condition, in group order. Setting it
     /// collapses the rule back to a single group — the legacy shape.
     public var conditions: [Condition] {

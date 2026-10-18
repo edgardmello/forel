@@ -225,7 +225,7 @@ struct RuleEditorView: View {
     }
 
     private var conditionIssues: [RuleValidator.Issue] {
-        RuleValidator.validate(rule.conditions)
+        RuleValidator.validate(rule.conditions) + RuleValidator.validate(groups: rule.conditionGroups)
     }
 
     private var actionIssues: [RuleValidator.Issue] {

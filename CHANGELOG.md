@@ -7,6 +7,7 @@ All notable changes to Forel are documented here. Format loosely follows
 
 ### Added
 - Rules can now be imported and exported as `.forelrules` files named after their watched folder, and Hazel exports can be migrated with unsupported parts clearly flagged for review.
+- Rules can now mix "match all" and "match any" in one rule by grouping conditions: each group matches all or any of its conditions, and the rule matches all, any, or none of the groups. Existing rules keep working unchanged.
 - Right-clicking a watched folder in the sidebar now offers Show in Finder.
 - Activity can now be opened from the bottom of the sidebar, next to Settings.
 - When Run Now has failed actions, its result now stays on screen with a Show in Activity link to see what went wrong.

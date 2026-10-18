@@ -102,3 +102,67 @@ import Testing
         ]
     }
 }
+
+// MARK: - Condition groups
+
+@Test func groupedRulesRoundTripThroughTheNativeFormat() throws {
+    let original = makeRule(
+        name: "grouped",
+        conditionMatch: .any,
+        conditionGroups: [
+            ConditionGroup(match: .any, conditions: [
+                makeCondition(.extension_, .is, "pdf"),
+                makeCondition(.extension_, .is, "doc"),
+            ]),
+            ConditionGroup(match: .all, conditions: [
+                makeCondition(.name, .contains, "report"),
+            ]),
+        ],
+        actions: [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["Hit"])]))]
+    )
+
+    let data = try RuleTransfer.exportForel([original])
+    let result = try RuleTransfer.importRules(from: data, folderId: "folder-2")
+
+    let imported = try #require(result.rules.first)
+    #expect(imported.conditionMatch == .any)
+    #expect(imported.conditionGroups.count == 2)
+    #expect(imported.conditionGroups.map(\.match) == [.any, .all])
+    #expect(imported.conditionGroups[0].conditions.map(\.value) == ["pdf", "doc"])
+    #expect(imported.conditionGroups[0].conditions.allSatisfy { $0.ruleId == imported.id })
+}
+
+@Test func legacyFlatExportsStillImportIntoASingleGroup() throws {
+    // Hand-written version-1 export in the pre-groups shape.
+    let json = """
+    {
+      "format" : "forel-rules",
+      "version" : 1,
+      "rules" : [
+        {
+          "id" : "r9",
+          "folderId" : "old-folder",
+          "name" : "legacy",
+          "enabled" : true,
+          "conditionMatch" : "any",
+          "recursionDepth" : 0,
+          "conditions" : [
+            { "id" : "c1", "ruleId" : "r9", "kind" : "extension", "operator" : "is", "value" : "pdf" },
+            { "id" : "c2", "ruleId" : "r9", "kind" : "extension", "operator" : "is", "value" : "doc" }
+          ],
+          "actions" : [],
+          "priority" : 0,
+          "createdAt" : "2026-01-01T00:00:00Z"
+        }
+      ]
+    }
+    """
+    let result = try RuleTransfer.importRules(from: Data(json.utf8), folderId: "folder-2")
+
+    let imported = try #require(result.rules.first)
+    #expect(imported.conditionMatch == .any)
+    #expect(imported.conditionGroups.count == 1)
+    #expect(imported.conditionGroups[0].match == .any)
+    #expect(imported.conditionGroups[0].conditions.map(\.value) == ["pdf", "doc"])
+    #expect(imported.conditionGroups[0].conditions.allSatisfy { $0.ruleId == imported.id })
+}

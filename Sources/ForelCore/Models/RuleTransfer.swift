@@ -46,10 +46,12 @@ public enum RuleTransfer {
         let format: String
         let version: Int
         let rules: [Rule]
+
+        static let currentVersion = 2
     }
 
     public static func exportForel(_ rules: [Rule]) throws -> Data {
-        let export = NativeExport(format: "forel-rules", version: 1, rules: rules)
+        let export = NativeExport(format: "forel-rules", version: NativeExport.currentVersion, rules: rules)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return try encoder.encode(export)
@@ -57,7 +59,7 @@ public enum RuleTransfer {
 
     public static func importRules(from data: Data, folderId: String) throws -> RuleImportResult {
         if let native = try? JSONDecoder().decode(NativeExport.self, from: data) {
-            guard native.format == "forel-rules", native.version == 1 else {
+            guard native.format == "forel-rules", (1...NativeExport.currentVersion).contains(native.version) else {
                 throw RuleTransferError.invalidNativeFile
             }
             return RuleImportResult(rules: native.rules.map { remap($0, folderId: folderId) }, issues: [])
@@ -76,8 +78,13 @@ public enum RuleTransfer {
             recursionDepth: source.recursionDepth,
             priority: source.priority
         )
-        rule.conditions = source.conditions.map {
-            Condition(ruleId: id, kind: $0.kind, operator: $0.operator, value: $0.value)
+        rule.conditionGroups = source.conditionGroups.map { group in
+            ConditionGroup(
+                match: group.match,
+                conditions: group.conditions.map {
+                    Condition(ruleId: id, kind: $0.kind, operator: $0.operator, value: $0.value)
+                }
+            )
         }
         rule.actions = source.actions.enumerated().map {
             Action(ruleId: id, kind: $0.element.kind, params: $0.element.params, position: Int64($0.offset))
@@ -100,8 +107,8 @@ public enum RuleTransfer {
                   let name = archive.string(object["description"]), !name.isEmpty else { continue }
 
             var localIssues: [RuleTransferIssue] = []
-            var source = Rule(folderId: folderId, name: name, enabled: true)
-            source.conditionMatch = archive.number(object["predicateType"]) == 0 ? .any : .all
+            let predicateMatch: ConditionMatch = archive.number(object["predicateType"]) == 0 ? .any : .all
+            var source = Rule(folderId: folderId, name: name, enabled: true, conditionMatch: predicateMatch)
 
             let criteria = archive.array(object["criteria"]) ?? []
             for criterion in criteria {

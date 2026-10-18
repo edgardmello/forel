@@ -24,6 +24,17 @@ public enum RuleValidator {
         public init(message: String) { self.message = message }
     }
 
+    /// Group-level checks: once a rule has more than one group, an empty
+    /// group (vacuously true) is almost certainly a leftover from deleting
+    /// its conditions, not an intent — flag it instead of silently changing
+    /// how the rule combines.
+    public static func validate(groups: [ConditionGroup]) -> [Issue] {
+        guard groups.count > 1 else { return [] }
+        return groups.contains { $0.conditions.isEmpty }
+            ? [Issue(message: "Every condition group needs at least one condition")]
+            : []
+    }
+
     public static func validate(_ conditions: [Condition]) -> [Issue] {
         conditions.compactMap { condition in
             if condition.kind == .spotlightMetadata {
