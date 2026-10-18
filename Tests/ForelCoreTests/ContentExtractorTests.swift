@@ -278,20 +278,6 @@ import AppKit
 
 // MARK: - Fixtures
 
-/// Draws `text` into a single-page PDF with a real text layer that PDFKit can read.
-private func makeTextPDF(at path: String, text: String) {
-    var mediaBox = CGRect(x: 0, y: 0, width: 612, height: 792)
-    guard let ctx = CGContext(URL(fileURLWithPath: path) as CFURL, mediaBox: &mediaBox, nil) else { return }
-    ctx.beginPDFPage(nil)
-    let nsCtx = NSGraphicsContext(cgContext: ctx, flipped: false)
-    NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.current = nsCtx
-    (text as NSString).draw(at: CGPoint(x: 72, y: 700), withAttributes: [.font: NSFont.systemFont(ofSize: 24)])
-    NSGraphicsContext.restoreGraphicsState()
-    ctx.endPDFPage()
-    ctx.closePDF()
-}
-
 /// Renders `text` as large black-on-white text into an image (no text layer).
 private func renderTextImage(_ text: String, size: NSSize = NSSize(width: 600, height: 200)) -> NSImage {
     let image = NSImage(size: size)

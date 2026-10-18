@@ -2044,6 +2044,7 @@ private struct RenamePatternEditor: View {
         ("{month}", "month"),
         ("{day}", "day"),
         ("{size}", "size"),
+        ("{content:REGEX}", "captured from contents"),
     ]
 
     var body: some View {

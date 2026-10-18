@@ -37,6 +37,109 @@ struct TokenExpanderTests {
         #expect(result == "{not_a_token}")
     }
 
+    // MARK: - {content:REGEX} tokens
+
+    @Test func contentTokenCapturesFirstGroupAndNestsRegexBraces() throws {
+        let dir = TempDir()
+        let file = dir.file("iptu2026.pdf.txt", contents: "COTA ÚNICA - IPTU 2026\nINSCRIÇÃO: 2.038.592-8")
+
+        // \d{4} inside the token: the balanced-brace scanner must not end the
+        // token at the quantifier's closing brace.
+        let year = try TokenExpander.expand("{content:IPTU (\\d{4})}", path: file)
+        let inscricao = try TokenExpander.expand("{content:INSCRIÇÃO: ([\\d.]+-\\d)}", path: file)
+
+        #expect(year == "2026")
+        #expect(inscricao == "2.038.592-8")
+    }
+
+    @Test func contentTokenFallsBackToWholeMatchWithoutCaptureGroup() throws {
+        let dir = TempDir()
+        let file = dir.file("doc.txt", contents: "ref REF-2026/042 ok")
+
+        let result = try TokenExpander.expand("{content:REF-[0-9/]+}", path: file)
+
+        #expect(result == "REF-2026/042")
+    }
+
+    @Test func contentTokenMatchesLineAnchorsAndTransformsTitle() throws {
+        let dir = TempDir()
+        let file = dir.file("doc.txt", contents: "intro line\nMARIA TEREZA ALCURE DIAS LEITE\nINSCRIÇÃO: 2.038.592-8")
+
+        // ^…$ anchor per line (anchorsMatchLines), and |title capitalizes each
+        // word while lowercasing the rest.
+        let name = try TokenExpander.expand("{content:^([A-ZÀ-Ú ]+)$|title}", path: file)
+        let upper = try TokenExpander.expand("{content:^([a-zà-ú ]+)$|upper}", path: file)
+
+        #expect(name == "Maria Tereza Alcure Dias Leite")
+        #expect(upper == "INTRO LINE")
+    }
+
+    @Test func contentTokenKeepsRegexAlternationAndSharesExtraction() throws {
+        let dir = TempDir()
+        let file = dir.file("doc.txt", contents: "IPTU 2026")
+
+        // `|` is alternation unless followed by a known transform name.
+        let either = try TokenExpander.expand("{content:ISSU (\\d{4})|IPTU (\\d{4})}", path: file)
+        #expect(either == "2026")
+
+        let combined = try TokenExpander.expand("{content:IPTU (\\d{4})}-{content:IPTU (\\d{4})|title}", path: file)
+        #expect(combined == "2026-2026")
+    }
+
+    @Test func contentTokenThrowsWhenRegexHasNoMatch() throws {
+        let dir = TempDir()
+        let file = dir.file("doc.txt", contents: "nothing relevant")
+
+        #expect(throws: TokenExpanderError.self) {
+            try TokenExpander.expand("{content:IPTU (\\d{4})}", path: file)
+        }
+    }
+
+    @Test func contentTokenThrowsOnUnterminatedTokenAndInvalidRegex() throws {
+        let dir = TempDir()
+        let file = dir.file("doc.txt", contents: "IPTU 2026")
+
+        #expect(throws: TokenExpanderError.self) {
+            try TokenExpander.expand("{content:IPTU (\\d{4}", path: file)
+        }
+        #expect(throws: TokenExpanderError.self) {
+            try TokenExpander.expand("{content:[unclosed}", path: file)
+        }
+    }
+
+    @Test func previewExpandReplacesContentTokensWithPlaceholder() {
+        let result = TokenExpander.previewExpand("{content:IPTU (\\d{4})}-iptu.{extension}", now: fixedDate())
+
+        #expect(result == "content-iptu.txt")
+    }
+
+    /// End to end with the pipeline a real IPTU rename uses: a PDF with a
+    /// text layer (PDFKit extraction, same as the Contents condition) and
+    /// one pattern pulling three independent fields out of it. Mirrors the
+    /// real Rio IPTU layout as PDFKit extracts it: the taxpayer's name
+    /// shares the first line with the inscrição and a code, and all-caps
+    /// decoys (the neighborhood) follow — anchoring on "first all-caps
+    /// line" would grab the decoy instead of the contributor.
+    @Test func contentTokensRenameAnIptuPdfEndToEnd() throws {
+        let dir = TempDir()
+        let pdf = (dir.path as NSString).appendingPathComponent("iptu2026.pdf")
+        makeTextPDF(
+            at: pdf,
+            text: """
+            2.038.592-8 00 MARIA TEREZA ALCURE DIAS LEITE
+            BARRA DA TIJUCA
+            COTA ÚNICA - IPTU 2026
+            INSCRIÇÃO: 2.038.592-8
+            """,
+            fontSize: 11
+        )
+
+        let pattern = "{content:IPTU (\\d{4})}-iptu({content:INSCRIÇÃO: ([\\d.]+-[0-9X])})_{content:^\\d\\.\\d{3}\\.\\d{3}-[0-9X] \\d+ ([A-ZÀ-Ú ]+)$|title}.{extension}"
+        let result = try TokenExpander.expand(pattern, path: pdf)
+
+        #expect(result == "2026-iptu(2.038.592-8)_Maria Tereza Alcure Dias Leite.pdf")
+    }
+
     @Test func expandsNameAndExtensionWithoutRequiringTheFileToExist() throws {
         // {name}/{extension} only need `path` itself, not a real file on
         // disk — unlike {date_modified}/{date_created}/{size} below.

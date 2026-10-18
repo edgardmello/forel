@@ -1931,7 +1931,9 @@ public enum ActionExecutor {
 
     /// Substitutes tokens in rename patterns via `TokenExpander`. Supported
     /// tokens: `{name}`, `{extension}`, `{current_date}`, `{year}`,
-    /// `{month}`, `{day}`, `{date_created}`, `{date_modified}`, `{size}`.
+    /// `{month}`, `{day}`, `{date_created}`, `{date_modified}`, `{size}`,
+    /// and `{content:REGEX}` (captures from the file's text; optional
+    /// trailing `|title`/`|upper`/`|lower` transforms the capture).
     private static func applyRenamePattern(_ pattern: String, path: String) throws -> String {
         let ext = URL(fileURLWithPath: path).pathExtension
         var result = try TokenExpander.expand(pattern, path: path)
