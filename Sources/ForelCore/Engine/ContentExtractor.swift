@@ -506,6 +506,14 @@ public enum ContentExtractor {
         nonisolated(unsafe) let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
+        // Portuguese first, English as fallback: the default recognition
+        // mangles the accents Brazilian documents match on ("matrícula").
+        // Only languages this Vision revision actually supports are set —
+        // an unsupported entry makes the whole request fail.
+        let supported = (try? VNRecognizeTextRequest.supportedRecognitionLanguages(
+            for: .accurate, revision: request.revision)) ?? []
+        let preferred = ["pt-BR", "en-US"].filter { supported.contains($0) }
+        if !preferred.isEmpty { request.recognitionLanguages = preferred }
         nonisolated(unsafe) let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
 
         let semaphore = DispatchSemaphore(value: 0)
