@@ -580,6 +580,15 @@ public final class Database: @unchecked Sendable {
         try stmt.runToCompletion()
     }
 
+    public func moveRule(_ ruleId: String, toFolder folderId: String) throws {
+        let priority = try nextRulePriority(folderId: folderId)
+        let stmt = try statement("UPDATE rules SET folder_id=?1, priority=?2 WHERE id=?3")
+        stmt.bind(1, folderId)
+        stmt.bind(2, priority)
+        stmt.bind(3, ruleId)
+        try stmt.runToCompletion()
+    }
+
     public func toggleRule(_ id: String, enabled: Bool) throws {
         let stmt = try statement("UPDATE rules SET enabled=?1 WHERE id=?2")
         stmt.bind(1, bool: enabled)

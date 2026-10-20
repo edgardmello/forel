@@ -291,6 +291,36 @@ public struct Rule: Codable, Equatable, Sendable {
         try c.encode(createdAt, forKey: .createdAt)
     }
 
+    /// A deep copy with fresh identifiers, ready to insert as a new rule in
+    /// `folderId` (defaults to the same folder). The copy starts disabled so
+    /// it can never double up on files the original already acts on.
+    public func duplicated(inFolder folderId: String? = nil) -> Rule {
+        let newId = UUID().uuidString
+        var copy = Rule(
+            id: newId,
+            folderId: folderId ?? self.folderId,
+            name: name + " (copy)",
+            enabled: false,
+            conditionMatch: conditionMatch,
+            recursionDepth: recursionDepth,
+            priority: priority,
+            createdAt: ISO8601DateFormatter.forelUTC.string(from: Date())
+        )
+        copy.conditionGroups = conditionGroups.map { group in
+            ConditionGroup(
+                id: UUID().uuidString,
+                match: group.match,
+                conditions: group.conditions.map {
+                    Condition(ruleId: newId, kind: $0.kind, operator: $0.operator, value: $0.value)
+                }
+            )
+        }
+        copy.actions = actions.map {
+            Action(ruleId: newId, kind: $0.kind, params: $0.params, position: $0.position)
+        }
+        return copy
+    }
+
     /// Flat projection of every condition, in group order. Setting it
     /// collapses the rule back to a single group — the legacy shape.
     public var conditions: [Condition] {
