@@ -1,0 +1,144 @@
+{
+  "format": "forel-rules",
+  "version": 2,
+  "rules": [
+    {
+      "id": "rgi-com-folha",
+      "folderId": "import",
+      "name": "RGI — página com folha identificada",
+      "enabled": false,
+      "conditionMatch": "all",
+      "recursionDepth": null,
+      "conditions": [
+        { "id": "c1", "ruleId": "rgi-com-folha", "kind": "contents", "operator": "matches_regex", "value": "(?i)matr[\\wÀ-ÿ]{3,9}" },
+        { "id": "c2", "ruleId": "rgi-com-folha", "kind": "contents", "operator": "matches_regex", "value": "(?i)registro\\s+de\\s+im[óo]veis|registro\\s+geral\\s+de\\s+im[óo]veis" },
+        { "id": "c3", "ruleId": "rgi-com-folha", "kind": "contents", "operator": "matches_regex", "value": "(?i)f(?:ls?|lhas?|olhas?)\\.?\\s*n?[ºo°.]?\\s*\\d{1,3}" }
+      ],
+      "actions": [
+        { "id": "a1", "ruleId": "rgi-com-folha", "kind": "add_tag", "params": { "tags": ["rgi"] }, "position": 0 },
+        { "id": "a3", "ruleId": "rgi-com-folha", "kind": "add_comment", "params": { "comment": "Cartório: {content:(?i)(?:[1-9]\\d*\\s*[ºo°][^\\n]{0,60}registro de im[óo]veis|registro de im[óo]veis[^\\n]{0,60}?[1-9]\\d*\\s*[ºo°])|title}" }, "position": 1 },
+        { "id": "a2", "ruleId": "rgi-com-folha", "kind": "rename", "params": { "pattern": "RGI-{content:(?i)matr[\\wÀ-ÿ]*\\s+(?:[fi]?icha\\s+)?n?[ºo°.]?\\s*([\\d.]{4,})}-fls{content:(?i)f(?:ls?|lhas?|olhas?)\\.?\\s*n?[ºo°.]?\\s*(\\d{1,3})|pad2}-{content:([1-9]\\d*)\\s*[ºo°]|upper}RI", "clean_file_name": false }, "position": 2 }
+      ],
+      "priority": 0,
+      "createdAt": "2026-06-20T00:00:00Z"
+    },
+    {
+      "id": "rgi-sem-folha",
+      "folderId": "import",
+      "name": "RGI — página sem folha identificada",
+      "enabled": false,
+      "conditionMatch": "all",
+      "recursionDepth": null,
+      "conditions": [
+        { "id": "c1", "ruleId": "rgi-sem-folha", "kind": "contents", "operator": "matches_regex", "value": "(?i)matr[\\wÀ-ÿ]{3,9}" },
+        { "id": "c2", "ruleId": "rgi-sem-folha", "kind": "contents", "operator": "matches_regex", "value": "(?i)registro\\s+de\\s+im[óo]veis|registro\\s+geral\\s+de\\s+im[óo]veis" },
+        { "id": "c3", "ruleId": "rgi-sem-folha", "kind": "tags", "operator": "does_not_contain", "value": "rgi" }
+      ],
+      "actions": [
+        { "id": "a1", "ruleId": "rgi-sem-folha", "kind": "add_tag", "params": { "tags": ["rgi"] }, "position": 0 },
+        { "id": "a3", "ruleId": "rgi-sem-folha", "kind": "add_comment", "params": { "comment": "Cartório: {content:(?i)(?:[1-9]\\d*\\s*[ºo°][^\\n]{0,60}registro de im[óo]veis|registro de im[óo]veis[^\\n]{0,60}?[1-9]\\d*\\s*[ºo°])|title}" }, "position": 1 },
+        { "id": "a2", "ruleId": "rgi-sem-folha", "kind": "rename", "params": { "pattern": "RGI-{content:(?i)matr[\\wÀ-ÿ]*\\s+(?:[fi]?icha\\s+)?n?[ºo°.]?\\s*([\\d.]{4,})}-{content:([1-9]\\d*)\\s*[ºo°]|upper}RI", "clean_file_name": false }, "position": 2 }
+      ],
+      "priority": 1,
+      "createdAt": "2026-06-20T00:00:00Z"
+    },
+    {
+      "id": "iptu",
+      "folderId": "import",
+      "name": "IPTU — exercício e inscrição",
+      "enabled": false,
+      "conditionMatch": "all",
+      "recursionDepth": null,
+      "conditions": [
+        { "id": "c1", "ruleId": "iptu", "kind": "contents", "operator": "contains", "value": "iptu" },
+        { "id": "c2", "ruleId": "iptu", "kind": "contents", "operator": "matches_regex", "value": "(?i)inscri[cç][ãa]o(?:\\s+imobili[áa]ria)?\\s*[:nº°]?\\s*[\\d.]+" }
+      ],
+      "actions": [
+        { "id": "a1", "ruleId": "iptu", "kind": "add_tag", "params": { "tags": ["iptu"] }, "position": 0 },
+        { "id": "a2", "ruleId": "iptu", "kind": "rename", "params": { "pattern": "IPTU-{content:(?i)(?:exerc[íi]cio|iptu)\\s*:?\\s*(\\d{4})}-{content:(?i)inscri[cç][ãa]o(?:\\s+imobili[áa]ria)?\\s*[:nº°]?\\s*([\\d.]+-?\\d*)}", "clean_file_name": false }, "position": 1 }
+      ],
+      "priority": 2,
+      "createdAt": "2026-06-20T00:00:00Z"
+    },
+    {
+      "id": "escritura",
+      "folderId": "import",
+      "name": "Escritura pública",
+      "enabled": false,
+      "conditionMatch": "all",
+      "recursionDepth": null,
+      "conditions": [
+        { "id": "c1", "ruleId": "escritura", "kind": "contents", "operator": "matches_regex", "value": "(?i)escritura\\s+p[uú]blica" }
+      ],
+      "actions": [
+        { "id": "a1", "ruleId": "escritura", "kind": "add_tag", "params": { "tags": ["escritura"] }, "position": 0 }
+      ],
+      "priority": 3,
+      "createdAt": "2026-06-20T00:00:00Z"
+    },
+    {
+      "id": "contrato-locacao",
+      "folderId": "import",
+      "name": "Contrato de locação",
+      "enabled": false,
+      "conditionMatch": "all",
+      "recursionDepth": null,
+      "conditions": [
+        { "id": "c1", "ruleId": "contrato-locacao", "kind": "contents", "operator": "matches_regex", "value": "(?i)contrato\\s+de\\s+loca[cç][ãa]o" }
+      ],
+      "actions": [
+        { "id": "a1", "ruleId": "contrato-locacao", "kind": "add_tag", "params": { "tags": ["locacao"] }, "position": 0 }
+      ],
+      "priority": 4,
+      "createdAt": "2026-06-20T00:00:00Z"
+    },
+    {
+      "id": "condominio",
+      "folderId": "import",
+      "name": "Boleto ou taxa de condomínio",
+      "enabled": false,
+      "conditionMatch": "all",
+      "recursionDepth": null,
+      "conditions": [
+        { "id": "c1", "ruleId": "condominio", "kind": "contents", "operator": "matches_regex", "value": "(?i)(boleto|recibo|taxa)\\s+(de\\s+)?condom[íi]nio" }
+      ],
+      "actions": [
+        { "id": "a1", "ruleId": "condominio", "kind": "add_tag", "params": { "tags": ["condominio"] }, "position": 0 }
+      ],
+      "priority": 5,
+      "createdAt": "2026-06-20T00:00:00Z"
+    },
+    {
+      "id": "aluguel",
+      "folderId": "import",
+      "name": "Recibo de aluguel",
+      "enabled": false,
+      "conditionMatch": "all",
+      "recursionDepth": null,
+      "conditions": [
+        { "id": "c1", "ruleId": "aluguel", "kind": "contents", "operator": "matches_regex", "value": "(?i)recibo\\s+de\\s+aluguel" }
+      ],
+      "actions": [
+        { "id": "a1", "ruleId": "aluguel", "kind": "add_tag", "params": { "tags": ["aluguel"] }, "position": 0 }
+      ],
+      "priority": 6,
+      "createdAt": "2026-06-20T00:00:00Z"
+    },
+    {
+      "id": "certidao",
+      "folderId": "import",
+      "name": "Certidão de ônus",
+      "enabled": false,
+      "conditionMatch": "all",
+      "recursionDepth": null,
+      "conditions": [
+        { "id": "c1", "ruleId": "certidao", "kind": "contents", "operator": "matches_regex", "value": "(?i)certid[ãa]o\\s+de\\s+([ôo]nus|propriedade|integridade)" }
+      ],
+      "actions": [
+        { "id": "a1", "ruleId": "certidao", "kind": "add_tag", "params": { "tags": ["certidao"] }, "position": 0 }
+      ],
+      "priority": 7,
+      "createdAt": "2026-06-20T00:00:00Z"
+    }
+  ]
+}
