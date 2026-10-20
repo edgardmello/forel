@@ -22,9 +22,28 @@ import ForelCore
 struct RuleListView: View {
     @EnvironmentObject var model: AppModel
     @State private var editingRule: Rule?
+    @State private var searchText = ""
+    @State private var isSelecting = false
+    @State private var selectedRuleIds: Set<String> = []
+    @State private var isConfirmingBulkDelete = false
 
     private var selectedFolder: WatchedFolder? {
         model.folders.first { $0.id == model.selectedFolderId }
+    }
+
+    private var otherFolders: [WatchedFolder] {
+        model.folders.filter { $0.id != model.selectedFolderId }
+    }
+
+    private var visibleRules: [Rule] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return model.rules }
+        return model.rules.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
+
+    /// Order numbers stay stable (position in the full list) while filtering.
+    private var orderById: [String: Int] {
+        Dictionary(model.rules.enumerated().map { ($1.id, $0 + 1) }, uniquingKeysWith: { a, _ in a })
     }
 
     var body: some View {
@@ -52,6 +71,7 @@ struct RuleListView: View {
             }
             if model.selectedFolderId != nil {
                 actionBar
+                rulesToolbar
             }
 
             if let runNowMessage = model.runNowMessageForSelectedFolder {
@@ -65,31 +85,63 @@ struct RuleListView: View {
                     emptyState
                     Spacer(minLength: 0)
                 }
+            } else if visibleRules.isEmpty {
+                Text("No rules match the filter.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(ForelTheme.secondaryText)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
             } else {
-                List {
-                    ForEach(Array(model.rules.enumerated()), id: \.element.id) { index, rule in
-                        RuleCard(
-                            rule: rule,
-                            order: index + 1,
-                            isExpanded: model.isRuleExpanded(rule),
-                            onToggleExpanded: { model.toggleRuleExpanded(rule) },
-                            onEdit: { editingRule = rule }
-                        )
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-                    }
-                    .onMove(perform: moveRules)
-                }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .scrollIndicators(.never)
+                rulesList
             }
         }
         .animation(.easeInOut(duration: 0.25), value: model.runNowMessageForSelectedFolder)
+        .confirmationDialog(
+            "Delete \(selectedRuleIds.count) rule\(selectedRuleIds.count == 1 ? "" : "s")?",
+            isPresented: $isConfirmingBulkDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete \(selectedRuleIds.count) Rule\(selectedRuleIds.count == 1 ? "" : "s")", role: .destructive) {
+                let doomed = model.rules.filter { selectedRuleIds.contains($0.id) }
+                model.deleteRules(doomed)
+                exitSelection()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The rules are removed from this folder. Their past activity stays in Activity.")
+        }
         .padding(16)
         .frame(minWidth: 460)
         .background(ForelTheme.background)
+    }
+
+    private var rulesList: some View {
+        List {
+            ForEach(Array(visibleRules.enumerated()), id: \.element.id) { index, rule in
+                ruleRow(rule, fallbackOrder: index + 1)
+            }
+            .onMove(perform: moveRules)
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .scrollIndicators(.never)
+    }
+
+    private func ruleRow(_ rule: Rule, fallbackOrder: Int) -> some View {
+        RuleCard(
+            rule: rule,
+            order: orderById[rule.id] ?? fallbackOrder,
+            isExpanded: model.isRuleExpanded(rule),
+            isSelecting: isSelecting,
+            isSelected: selectedRuleIds.contains(rule.id),
+            onToggleExpanded: { model.toggleRuleExpanded(rule) },
+            onToggleSelected: { toggleSelected(rule) },
+            onEdit: { editingRule = rule }
+        )
+            .contextMenu { ruleContextMenu(rule) }
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
     }
 
     private func editorHeight(for availableHeight: CGFloat) -> CGFloat {
@@ -97,9 +149,164 @@ struct RuleListView: View {
     }
 
     private func moveRules(from source: IndexSet, to destination: Int) {
+        guard !isSelecting, searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         var ids = model.rules.map(\.id)
         ids.move(fromOffsets: source, toOffset: destination)
         model.reorderRules(ids)
+    }
+
+    private func toggleSelected(_ rule: Rule) {
+        if selectedRuleIds.contains(rule.id) {
+            selectedRuleIds.remove(rule.id)
+        } else {
+            selectedRuleIds.insert(rule.id)
+        }
+    }
+
+    private func exitSelection() {
+        isSelecting = false
+        selectedRuleIds.removeAll()
+    }
+
+    // MARK: - Rules toolbar (filter, collapse, bulk state)
+
+    private var rulesToolbar: some View {
+        HStack(spacing: 8) {
+            if isSelecting {
+                bulkSelectionBar
+            } else {
+                GlassField(placeholder: "Filter rules", text: $searchText)
+                    .frame(maxWidth: 190)
+
+                Button {
+                    model.collapseAllRules()
+                } label: {
+                    Image(systemName: "rectangle.compress.vertical")
+                }
+                .buttonStyle(IconButtonStyle())
+                .help("Collapse all rules")
+                .disabled(!model.rules.contains { model.isRuleExpanded($0) })
+
+                Spacer()
+
+                Button {
+                    model.setRulesEnabled(model.rules, true)
+                } label: {
+                    Label("Enable All", systemImage: "checkmark.circle")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(!model.rules.contains { !$0.enabled })
+
+                Button {
+                    model.setRulesEnabled(model.rules, false)
+                } label: {
+                    Label("Disable All", systemImage: "pause.circle")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(!model.rules.contains { $0.enabled })
+
+                Button {
+                    isSelecting = true
+                } label: {
+                    Label("Select", systemImage: "checkmark.circlebadge")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
+        }
+        .padding(.top, -6)
+    }
+
+    private var bulkSelectionBar: some View {
+        HStack(spacing: 8) {
+            Text("\(selectedRuleIds.count) selected")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(ForelTheme.secondaryText)
+
+            Button {
+                let targets = model.rules.filter { selectedRuleIds.contains($0.id) }
+                model.setRulesEnabled(targets, true)
+                exitSelection()
+            } label: {
+                Label("Enable", systemImage: "checkmark.circle")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(selectedRuleIds.isEmpty)
+
+            Button {
+                let targets = model.rules.filter { selectedRuleIds.contains($0.id) }
+                model.setRulesEnabled(targets, false)
+                exitSelection()
+            } label: {
+                Label("Disable", systemImage: "pause.circle")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(selectedRuleIds.isEmpty)
+
+            Spacer()
+
+            Button(role: .destructive) {
+                isConfirmingBulkDelete = true
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(selectedRuleIds.isEmpty)
+
+            Button {
+                exitSelection()
+            } label: {
+                Text("Done")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+        }
+    }
+
+    @ViewBuilder
+    private func ruleContextMenu(_ rule: Rule) -> some View {
+        Button {
+            editingRule = rule
+        } label: {
+            Label("Edit", systemImage: "pencil")
+        }
+
+        Button {
+            model.duplicateRule(rule)
+        } label: {
+            Label("Duplicate", systemImage: "plus.square.on.square")
+        }
+
+        Button {
+            model.toggleRule(rule, enabled: !rule.enabled)
+        } label: {
+            Label(rule.enabled ? "Disable" : "Enable",
+                  systemImage: rule.enabled ? "pause.circle" : "checkmark.circle")
+        }
+
+        if !otherFolders.isEmpty {
+            Menu("Move to") {
+                ForEach(otherFolders, id: \.id) { folder in
+                    Button(folder.path.split(separator: "/").last.map(String.init) ?? folder.path) {
+                        model.moveRule(rule, toFolder: folder.id)
+                    }
+                }
+            }
+
+            Menu("Copy to") {
+                ForEach(otherFolders, id: \.id) { folder in
+                    Button(folder.path.split(separator: "/").last.map(String.init) ?? folder.path) {
+                        model.duplicateRule(rule, toFolder: folder.id)
+                    }
+                }
+            }
+        }
+
+        Divider()
+
+        Button(role: .destructive) {
+            model.deleteRule(rule)
+        } label: {
+            Label("Delete", systemImage: "trash")
+        }
     }
 
     @ViewBuilder
@@ -309,19 +516,32 @@ private struct RuleCard: View {
     let rule: Rule
     let order: Int
     let isExpanded: Bool
+    let isSelecting: Bool
+    let isSelected: Bool
     let onToggleExpanded: () -> Void
+    let onToggleSelected: () -> Void
     let onEdit: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 11))
-                    .foregroundStyle(ForelTheme.secondaryText.opacity(0.6))
+                if isSelecting {
+                    Button(action: onToggleSelected) {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 15))
+                            .foregroundStyle(isSelected ? ForelTheme.accent : ForelTheme.secondaryText)
+                    }
+                    .buttonStyle(.plain)
                     .frame(width: 18, height: 24)
-                    .pointingHandCursor()
+                } else {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 11))
+                        .foregroundStyle(ForelTheme.secondaryText.opacity(0.6))
+                        .frame(width: 18, height: 24)
+                        .pointingHandCursor()
+                }
 
-                Button(action: onToggleExpanded) {
+                Button(action: isSelecting ? onToggleSelected : onToggleExpanded) {
                     HStack(spacing: 8) {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                             .font(.system(size: 10, weight: .semibold))
@@ -351,7 +571,7 @@ private struct RuleCard: View {
                 .tint(ForelTheme.accent)
                 .controlSize(.small)
 
-                Button(action: onToggleExpanded) {
+                Button(action: isSelecting ? onToggleSelected : onToggleExpanded) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(rule.name)
                             .font(.system(size: 13, weight: .semibold))

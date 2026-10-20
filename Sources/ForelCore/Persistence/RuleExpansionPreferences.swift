@@ -75,6 +75,22 @@ public struct RuleExpansionPreferences: Equatable, Sendable {
         }
     }
 
+    /// Collapses every rule in `rules`: enabled ones join `collapsedRuleIds`
+    /// (their default is expanded), disabled ones leave `expandedDisabledRuleIds`
+    /// (their default is collapsed).
+    public mutating func collapseAll(_ rules: [Rule], in db: Database) {
+        let oldCollapsed = collapsedRuleIds
+        let oldExpandedDisabled = expandedDisabledRuleIds
+        collapsedRuleIds.formUnion(rules.filter(\.enabled).map(\.id))
+        expandedDisabledRuleIds.subtract(rules.map(\.id))
+        if collapsedRuleIds != oldCollapsed {
+            persist(collapsedRuleIds, key: Self.collapsedRuleIdsSettingKey, in: db)
+        }
+        if expandedDisabledRuleIds != oldExpandedDisabled {
+            persist(expandedDisabledRuleIds, key: Self.expandedDisabledRuleIdsSettingKey, in: db)
+        }
+    }
+
     private static func loadRuleIdSet(from db: Database, key: String) -> Set<String> {
         guard
             let rawValue = try? db.getSetting(key),
