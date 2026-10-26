@@ -23,8 +23,18 @@ struct ForelMacApp: App {
     @StateObject private var model: AppModel
     @StateObject private var updater: UpdaterManager
 
+    /// Held for the life of the process; see `InstanceLock`.
+    private static var instanceLock: InstanceLock?
+
     init() {
-        let model = try! AppModel()
+        let appSupport = try! AppModel.prepareAppSupportDirectory()
+        let lockPath = appSupport.appendingPathComponent("forel.lock").path
+        guard let instanceLock = InstanceLock(path: lockPath) else {
+            SingleInstance.handOffToRunningInstance(lockPath: lockPath)
+        }
+        Self.instanceLock = instanceLock
+
+        let model = try! AppModel(appSupport: appSupport)
         _model = StateObject(wrappedValue: model)
         let updater = UpdaterManager(db: model.db)
         _updater = StateObject(wrappedValue: updater)
@@ -32,12 +42,17 @@ struct ForelMacApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Forel") {
+        // A single `Window` rather than a `WindowGroup`: Forel has one main
+        // window, so File has no "New Window" item that would open a second
+        // one, and reopening after the window was closed brings back that
+        // same window instead of adding another.
+        Window("Forel", id: AppDelegate.mainWindowID) {
             ContentView()
                 .environmentObject(model)
                 .environmentObject(updater)
                 .frame(minWidth: 960, minHeight: 520)
                 .background(WindowAccessor { appDelegate.mainWindowDidAttach($0) })
+                .background(OpenWindowAccessor { appDelegate.openWindow = $0 })
                 .onAppear {
                     appDelegate.configure(model: model, updater: updater)
                 }

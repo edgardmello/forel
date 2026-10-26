@@ -31,6 +31,9 @@ All notable changes to Forel are documented here. Format loosely follows
 - Settings → About now shows the version, build, copyright, and repository link, matching the About Forel window.
 
 ### Fixed
+- Reopening Forel from Finder, the Dock or the menu bar after closing its window now brings the window back instead of doing nothing.
+- Forel now runs only once: launching it again while it's already running brings the running copy's window forward instead of starting a second copy that would run every rule twice.
+- File > New Forel Window (⌘N) is gone; Forel now has a single main window.
 - Renaming no longer fails when a file with the target name already exists: re-deliveries of the same document — whether byte-identical or re-printed with identical text — converge on the one renamed copy (the duplicate goes to the Trash, undoable), and genuinely different files get the usual " (1)" suffix instead of being left behind with the old name.
 - Contents conditions now match regardless of letter case, so a rule searching for "Fernanda Freitas" also finds "FERNANDA FREITAS" in a document. Regex conditions keep their own case rules.
 - Forel now re-registers itself to start at login when macOS loses the registration (a system update or cleaner app can remove it), and Settings warns with a fix instead of showing the toggle as on when Forel isn't actually set to launch.
