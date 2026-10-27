@@ -57,10 +57,11 @@ public enum TokenExpander {
     /// extraction machinery as the Contents condition — plain text, PDF,
     /// Word…): the first match of REGEX, using capture group 1 when the
     /// pattern has one. A trailing `|title`/`|upper`/`|lower` transforms
-    /// the captured text. Regex braces nest naturally, so quantifiers like
-    /// `\d{4}` work: `{content:IPTU (\d{4})}` yields `2026`. A token whose
-    /// regex finds nothing throws — a rename must never silently produce a
-    /// name with a missing field.
+    /// the captured text, and `|padN` (2–9) zero-pads a purely numeric
+    /// capture so page numbers sort correctly. Regex braces nest naturally,
+    /// so quantifiers like `\d{4}` work: `{content:IPTU (\d{4})}` yields
+    /// `2026`. A token whose regex finds nothing throws — a rename must
+    /// never silently produce a name with a missing field.
     public static func expand(_ template: String, path: String, now: Date = Date()) throws -> String {
         let url = URL(fileURLWithPath: path)
         let stem = url.deletingPathExtension().lastPathComponent
@@ -212,10 +213,31 @@ public enum TokenExpander {
             case "title": return (pattern, { $0.lowercased().capitalized })
             case "upper": return (pattern, { $0.uppercased() })
             case "lower": return (pattern, { $0.lowercased() })
-            default: break
+            default:
+                if let width = padWidth(named: name) {
+                    return (pattern, { padded($0, width: width) })
+                }
             }
         }
         return (body, nil)
+    }
+
+    /// `|pad2` … `|pad9`: zero-pad a purely numeric capture to `width` digits
+    /// so page numbers sort correctly (`fls02` before `fls10`).
+    private static func padWidth(named name: String) -> Int? {
+        guard name.count == 4,
+              name.hasPrefix("pad"),
+              let width = name.last?.wholeNumberValue,
+              (2...9).contains(width) else { return nil }
+        return width
+    }
+
+    /// A capture that isn't all ASCII digits — "2/10", "123.456" — is
+    /// returned unchanged; padding mixed text would only mangle it.
+    private static func padded(_ capture: String, width: Int) -> String {
+        guard capture.count < width,
+              capture.allSatisfy({ $0.isASCII && $0.isNumber }) else { return capture }
+        return String(repeating: "0", count: width - capture.count) + capture
     }
 
     private static func formatFileSize(_ bytes: UInt64) -> String {
