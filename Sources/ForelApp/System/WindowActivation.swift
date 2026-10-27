@@ -106,3 +106,15 @@ struct WindowAccessor: NSViewRepresentable {
         }
     }
 }
+
+/// Hands SwiftUI's `openWindow` action to AppKit code. The action stays
+/// usable after the window that provided it is closed, which is how the app
+/// delegate recreates the main window from the menu bar or a reopen event.
+struct OpenWindowAccessor: View {
+    @Environment(\.openWindow) private var openWindow
+    let onAppear: @MainActor (OpenWindowAction) -> Void
+
+    var body: some View {
+        Color.clear.onAppear { onAppear(openWindow) }
+    }
+}

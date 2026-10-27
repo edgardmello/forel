@@ -74,6 +74,24 @@ struct TokenExpanderTests {
         #expect(upper == "INTRO LINE")
     }
 
+    @Test func padTransformZeroPadsNumericCapturesForSorting() throws {
+        let dir = TempDir()
+        let page2 = dir.file("page2.txt", contents: "MATRÍCULA 123.456\nfls. 2/10")
+        let page10 = dir.file("page10.txt", contents: "MATRÍCULA 123.456\nfls. 10/10")
+        let odd = dir.file("odd.txt", contents: "fls. 2/10")
+        let wide = dir.file("wide.txt", contents: "mat 123")
+
+        // "2" → "02": fls02 now sorts before fls10 in the Finder.
+        let pageToken = "fls{content:fls\\.\\s*(\\d{1,3})|pad2}"
+        #expect(try TokenExpander.expand(pageToken, path: page2) == "fls02")
+        #expect(try TokenExpander.expand(pageToken, path: page10) == "fls10")
+
+        // Captures that aren't pure digits, or are already wider than the
+        // pad width, pass through unchanged.
+        #expect(try TokenExpander.expand("fls{content:fls\\.\\s*(\\d/\\d+)|pad2}", path: odd) == "fls2/10")
+        #expect(try TokenExpander.expand("{content:mat (\\d+)|pad2}", path: wide) == "123")
+    }
+
     @Test func contentTokenKeepsRegexAlternationAndSharesExtraction() throws {
         let dir = TempDir()
         let file = dir.file("doc.txt", contents: "IPTU 2026")
