@@ -110,6 +110,10 @@ public enum ConditionKind: String, Codable, Equatable, Sendable {
     case downloadedFromWebsite = "downloaded_from_website"
     case downloadedWithApp = "downloaded_with_app"
     case rawWhereFromMetadata = "raw_where_from_metadata"
+    case dateLastMatched = "date_last_matched"
+    case timesMatched = "times_matched"
+    case duplicate
+    case aiClassification = "ai_classification"
 
     public init(dbValue: String) {
         self = ConditionKind(rawValue: dbValue) ?? .name
@@ -184,6 +188,9 @@ public enum ActionKind: String, Codable, Equatable, Sendable {
     case ignore
     case pause
     case displayNotification = "display_notification"
+    case convertImage = "convert_image"
+    case compressPDF = "compress_pdf"
+    case makeSearchablePDF = "make_searchable_pdf"
     public init(dbValue: String) {
         self = ActionKind(rawValue: dbValue) ?? .moveToFolder
     }

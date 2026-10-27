@@ -31,7 +31,7 @@ extension ISO8601DateFormatter {
 /// `~/Library/Application Support/com.lab421.forel/forel.db` (migrated
 /// automatically from the legacy `com.forel.app` location) keeps working.
 public final class Database: @unchecked Sendable {
-    public static let currentSchemaVersion: Int64 = 9
+    public static let currentSchemaVersion: Int64 = 10
 
     private let handle: OpaquePointer
     private let lock = NSLock()
@@ -753,6 +753,46 @@ public final class Database: @unchecked Sendable {
         stmt.bind(3, state.fileId)
         stmt.bind(4, state.fingerprint)
         stmt.bind(5, state.updatedAt)
+        try stmt.runToCompletion()
+    }
+
+    // MARK: - Rule match state
+
+    public func getRuleMatchRecord(ruleId: String, fileKey: String) throws -> RuleMatchRecord? {
+        let stmt = try statement(
+            "SELECT rule_id, file_key, last_matched_at, match_count, fingerprint FROM rule_match_state WHERE rule_id=?1 AND file_key=?2"
+        )
+        stmt.bind(1, ruleId)
+        stmt.bind(2, fileKey)
+        guard try stmt.step() else { return nil }
+        return RuleMatchRecord(
+            ruleId: stmt.columnText(0),
+            fileKey: stmt.columnText(1),
+            lastMatchedAt: ISO8601DateFormatter.forelUTC.date(from: stmt.columnText(2)) ?? Date.distantPast,
+            matchCount: Int(stmt.columnInt64(3)),
+            fingerprint: stmt.columnTextOrNil(4)
+        )
+    }
+
+    /// Counts one more match of `ruleId` on the file, stamping it with
+    /// `matchedAt` and the file's fingerprint after the rule's actions ran.
+    /// Does nothing when the rule no longer exists (it was deleted while
+    /// the run was in flight).
+    public func recordRuleMatch(ruleId: String, fileKey: String, matchedAt: Date, fingerprint: String?) throws {
+        let stmt = try statement(
+            """
+            INSERT INTO rule_match_state (rule_id, file_key, last_matched_at, match_count, fingerprint)
+            SELECT ?1, ?2, ?3, 1, ?4 WHERE EXISTS (SELECT 1 FROM rules WHERE id=?1)
+            ON CONFLICT(rule_id, file_key) DO UPDATE SET
+                last_matched_at = excluded.last_matched_at,
+                match_count = rule_match_state.match_count + 1,
+                fingerprint = excluded.fingerprint
+            """
+        )
+        stmt.bind(1, ruleId)
+        stmt.bind(2, fileKey)
+        stmt.bind(3, ISO8601DateFormatter.forelUTC.string(from: matchedAt))
+        stmt.bind(4, fingerprint)
         try stmt.runToCompletion()
     }
 }

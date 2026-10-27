@@ -667,7 +667,7 @@ private struct RuleDetails: View {
             RuleDetailRow(
                 icon: condition.kind.iconSystemName,
                 badge: condition.kind.label,
-                title: "\(condition.operator.label) \(condition.value)",
+                title: "\(condition.operator.label) \(condition.kind == .duplicate ? (DuplicateScope(rawValue: condition.value)?.label ?? condition.value) : condition.value)",
                 detail: nil
             )
         }
@@ -837,7 +837,16 @@ private struct RuleDetails: View {
             }
             return ("pause for \(seconds) second\(isSingular ? "" : "s")", nil)
         case .displayNotification:
-            return ("display notification", action.params[ActionParam.notificationTitle]?.stringValue)        }
+            return ("display notification", action.params[ActionParam.notificationTitle]?.stringValue)
+        case .convertImage:
+            let format = ImageFormat(rawValue: action.params[ActionParam.imageFormat]?.stringValue ?? "")?.label ?? ImageFormat.jpeg.label
+            let size = action.params[ActionParam.maxDimension]?.stringValue.flatMap { $0.isEmpty ? nil : "max \($0) px" }
+            return ("convert to \(format)", size)
+        case .compressPDF:
+            return ("compress PDF", nil)
+        case .makeSearchablePDF:
+            return ("make PDF searchable", nil)
+        }
     }
 
     private func tagList(_ action: Action) -> String {

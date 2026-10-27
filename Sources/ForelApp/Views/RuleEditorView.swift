@@ -622,15 +622,34 @@ private struct ConditionRow: View {
         case .regex:
             RegexValueEditor(value: $condition.value)
         case .text:
-            GlassField(placeholder: "Value", text: $condition.value)
+            GlassField(
+                placeholder: condition.kind == .aiClassification ? "Description, e.g. a bank slip (boleto)" : "Value",
+                text: $condition.value
+            )
         case .spotlightMetadata:
             SpotlightMetadataValueEditor(value: $condition.value)
+        case .duplicateScope:
+            StringSelectMenu(
+                selection: $condition.value,
+                options: DuplicateScope.allCases.map(\.rawValue),
+                label: { value in DuplicateScope(rawValue: value)?.label ?? value }
+            )
         }
     }
 
     private var rowHelpText: String? {
         if condition.kind == .kind, condition.value == "archive" {
             return "Archive matches compressed formats such as ZIP, TAR, GZ, 7Z, RAR, XZ, ZST, TGZ, TBZ, and CAB."
+        }
+        if condition.kind == .aiClassification, let reason = LocalAI.unavailableReason {
+            return reason
+        }
+        if condition.operator == .matchesRegex {
+            let names = ConditionEvaluator.captureGroupNames(in: condition.value)
+            if !names.isEmpty {
+                let tokens = names.map { "{\($0)}" }.joined(separator: ", ")
+                return "Actions can use what this captures: \(tokens)"
+            }
         }
         return condition.kind.helpText
     }
@@ -673,6 +692,7 @@ private struct ConditionRow: View {
         case .size: return "0 MB"
         case .number: return "0"
         case .spotlightMetadata: return SpotlightMetadataCondition.make(key: "kMDItemAuthors", value: "")
+        case .duplicateScope: return DuplicateScope.sameFolder.rawValue
         case .absoluteDate:
             return operator_.usesRelativeDateValue ? "7 days" : DateValueFormatter.string(from: Date())
         default: return ""
@@ -1375,7 +1395,29 @@ private struct ActionRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 GlassField(placeholder: "Notification title (optional)", text: paramBinding(ActionParam.notificationTitle))
                 GlassField(placeholder: "Notification message (optional)", text: paramBinding(ActionParam.notificationBody))
-            }        case .moveToTrash, .delete:
+            }
+        case .convertImage:
+            HStack(spacing: 8) {
+                StringSelectMenu(
+                    selection: paramBinding(ActionParam.imageFormat, defaultValue: ImageFormat.jpeg.rawValue),
+                    options: ImageFormat.allCases.map(\.rawValue),
+                    label: { value in ImageFormat(rawValue: value)?.label ?? value }
+                )
+                .frame(width: 96)
+                Text("max")
+                    .font(.system(size: 12))
+                    .foregroundStyle(ForelTheme.secondaryText)
+                GlassField(placeholder: "any size", text: paramBinding(ActionParam.maxDimension))
+                    .frame(width: 84)
+                Text("px")
+                    .font(.system(size: 12))
+                    .foregroundStyle(ForelTheme.secondaryText)
+            }
+        case .compressPDF:
+            actionDescription("Shrinks the PDF's images; the original goes to the Trash")
+        case .makeSearchablePDF:
+            actionDescription("Adds selectable text to scanned pages with on-device OCR")
+        case .moveToTrash, .delete:
             Text("No parameters")
                 .font(.system(size: 11))
                 .foregroundStyle(ForelTheme.secondaryText)
@@ -1412,6 +1454,9 @@ private struct ActionRow: View {
                     params[ActionParam.syncDeletePolicy] = .string(SyncDeletePolicy.moveToTrash.rawValue)
                 } else if newKind == .pause {
                     params[ActionParam.pauseSeconds] = .number(1)
+                } else if newKind == .convertImage {
+                    params[ActionParam.imageFormat] = .string(ImageFormat.jpeg.rawValue)
+                    params[ActionParam.keepOriginal] = .bool(true)
                 } else if [.runScript, .runAppleScript, .runJavaScript].contains(newKind) {
                     // New script actions start on a script file; rules saved
                     // without this param keep their embedded script.
@@ -1547,6 +1592,8 @@ private struct ActionOptionsView: View {
                 syncOptions
             case .rename:
                 renameOptions
+            case .convertImage:
+                convertImageOptions
             default:
                 Text("No options for this action.")
                     .font(.system(size: 12))
@@ -1641,6 +1688,36 @@ private struct ActionOptionsView: View {
             .toggleStyle(.switch)
             .controlSize(.small)
         }
+    }
+
+    private var convertImageOptions: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: keepOriginalBinding) {
+                Text("Keep the original")
+                    .font(.system(size: 12))
+                    .foregroundStyle(ForelTheme.primaryText)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            Text(ActionExecutor.keepsOriginal(action)
+                 ? "The converted copy is saved next to the original, and later actions apply to the copy."
+                 : "The original goes to the Trash once the converted file is saved. Undo puts it back.")
+                .font(.system(size: 11))
+                .foregroundStyle(ForelTheme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var keepOriginalBinding: Binding<Bool> {
+        Binding(
+            get: { ActionExecutor.keepsOriginal(action) },
+            set: { newValue in
+                var dict: [String: JSONValue] = [:]
+                if case .object(let existing) = action.params { dict = existing }
+                dict[ActionParam.keepOriginal] = .bool(newValue)
+                action.params = .object(dict)
+            }
+        )
     }
 
     private var cleanNameBinding: Binding<Bool> {
@@ -2050,6 +2127,7 @@ private struct RenamePatternEditor: View {
         ("{day}", "day"),
         ("{size}", "size"),
         ("{content:REGEX}", "captured from contents"),
+        ("{ai:QUESTION}", "asked of Apple Intelligence"),
     ]
 
     var body: some View {
@@ -2066,6 +2144,10 @@ private struct RenamePatternEditor: View {
             }
 
             Text("Append to {content:…} captures: |title, |upper, |lower, or |pad2–|pad9 to zero-pad page numbers")
+                .font(.system(size: 10))
+                .foregroundStyle(ForelTheme.secondaryText)
+
+            Text("Named groups in a condition's regex, like (?<owner>.+), can be used here as {owner}")
                 .font(.system(size: 10))
                 .foregroundStyle(ForelTheme.secondaryText)
 

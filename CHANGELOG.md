@@ -6,6 +6,14 @@ All notable changes to Forel are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- Rules that depend on time ("is older than", "is within the last", "Date last matched") are now re-checked on a schedule (every 30 minutes by default, adjustable in Settings → Automation) and when the Mac wakes, so a file that turns 30 days old is handled without anything else touching it. A rule never repeats on a file it already handled unless the file changed.
+- New "Date last matched" and "Times matched" conditions remember, per rule, when and how often it matched each file, even after a rename — "Times matched is 0" runs a rule only the first time.
+- New "Duplicate" condition matches a file whose exact contents already exist in the same folder (or its subfolders); the oldest copy never counts as a duplicate, so it's the one that stays.
+- Regex conditions can capture values with named groups, like `(?<year>\d{4})`, and every action that takes tokens can reuse them as `{year}` — in a rename pattern, a destination folder, or a Finder comment. The rule editor lists the tokens a condition captures.
+- New Convert actions: Convert Image (JPEG, PNG, HEIC or TIFF, optionally scaled down to a maximum size), Compress PDF, and Make PDF Searchable, which adds selectable text to scanned PDFs and turns scanned images into searchable PDFs with on-device OCR. Originals that get replaced go to the Trash and come back with Undo.
+- Settings → Automation can empty old items out of the Trash: delete items after a number of days, keep the Trash under a size, or both. Turning a limit on shows exactly what would be deleted first, and deleted items are listed in Activity.
+- New "Document (AI)" condition asks Apple Intelligence, on this Mac, whether a file fits a description such as "a bank slip (boleto)", and rename patterns accept `{ai:QUESTION}` to name files with a value it reads from the document. Requires macOS 26 with Apple Intelligence turned on; otherwise the condition explains why it can't match.
+- `forel://` links let Shortcuts, Raycast, Alfred and scripts run a folder or a single rule, re-check rules, pause or resume watching, and open Forel — e.g. `forel://run?folder=/Users/you/Downloads`. Settings → Automation lists them.
 - Running `./build.sh` from a terminal without a command, or `package` without a version, now walks you through the command, architecture, version (suggesting the next patch, minor, or major release), and signing, then shows the equivalent one-line command; scripts and CI are unaffected. `./build.sh --help` lists every option.
 - The rule list gained a filter field, Collapse All, and a Select mode for enabling, disabling, or deleting several rules at once.
 - Rule context menus now offer Duplicate, Move to another folder, and Copy to another folder; copies start disabled and moves keep each rule's history attached.

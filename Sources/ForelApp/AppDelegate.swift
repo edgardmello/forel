@@ -16,6 +16,7 @@
 
 import AppKit
 import SwiftUI
+import ForelCore
 
 /// Closing the main window doesn't quit; Forel keeps running in the
 /// background and reopens the window from the menu bar, Finder or the Dock.
@@ -208,6 +209,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         activatesMainWindowWhenAttached = true
         openWindow(id: Self.mainWindowID)
         return true
+    }
+
+    /// `forel://` links from Shortcuts, Raycast, scripts or a browser.
+    /// Most run in the background; the window opens only when asked to, or
+    /// to explain a link that couldn't be carried out.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        if model == nil, let context = Self.launchContext {
+            model = context.model
+            updater = context.updater
+        }
+        guard let model else { return }
+        for url in urls {
+            if ForelURLCommand(url: url) == .open {
+                openMainWindow()
+                continue
+            }
+            model.handle(url: url)
+            if model.errorMessage != nil { openMainWindow() }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

@@ -106,6 +106,11 @@ public enum RuleValidator {
                 } else if action.params[ActionParam.script]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
                     return Issue(message: "Script cannot be empty")
                 }
+            case .convertImage:
+                let raw = action.params[ActionParam.maxDimension]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !raw.isEmpty, (Int(raw) ?? 0) <= 0 {
+                    return Issue(message: "Maximum size must be a whole number of pixels, or empty to keep the size")
+                }
             case .runAutomatorWorkflow:
                 if action.params[ActionParam.workflowPath]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
                     return Issue(message: "Automator workflow cannot be empty")

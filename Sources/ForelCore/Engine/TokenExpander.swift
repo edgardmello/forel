@@ -44,6 +44,11 @@ public enum TokenExpanderError: LocalizedError {
 /// monthly archive folder, or `{name}-{current_date}.{extension}` for a
 /// renamed file.
 public enum TokenExpander {
+    /// Values captured by the matched rule's named regex groups, set by
+    /// `RuleEngine` around a rule's actions so `{year}`-style tokens resolve
+    /// to what the conditions found. Built-in tokens win a name clash.
+    @TaskLocal public static var captures: [String: String] = [:]
+
     /// Substitutes tokens against a real file at `path`: `{name}`,
     /// `{extension}`, `{current_date}`, `{year}`, `{month}`, `{day}`,
     /// `{date_modified}`, `{date_created}`, `{size}`, and
@@ -80,7 +85,23 @@ public enum TokenExpander {
                 .replacingOccurrences(of: "{size}", with: formatFileSize(size))
         }
 
-        return try expandContentTokens(result, path: path)
+        result = substituteCaptures(result, captures)
+        result = try expandContentTokens(result, path: path)
+        return try expandAITokens(result, path: path)
+    }
+
+    private static func substituteCaptures(_ template: String, _ captures: [String: String]) -> String {
+        guard !captures.isEmpty, template.contains("{") else { return template }
+        var result = template
+        for (name, value) in captures {
+            // A captured "12/05" must not turn into a subfolder or an
+            // invalid file name.
+            let safe = value
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+            result = result.replacingOccurrences(of: "{\(name)}", with: safe)
+        }
+        return result
     }
 
     /// Same token set with placeholder values (a fixed sample name/extension
@@ -94,7 +115,7 @@ public enum TokenExpander {
             .replacingOccurrences(of: "{size}", with: "1.2MB")
         // No real file to read in a live preview — a readable placeholder so
         // the pattern's shape still shows. Malformed tokens stay as typed.
-        return replaceContentTokensForPreview(common)
+        return replaceTokensForPreview(replaceTokensForPreview(common, prefix: "{content:", placeholder: "content"), prefix: "{ai:", placeholder: "ai")
     }
 
     private static func substituteCommonTokens(_ template: String, name: String, extension ext: String, now: Date) -> String {
@@ -159,19 +180,51 @@ public enum TokenExpander {
         return output
     }
 
-    /// Non-throwing variant for `previewExpand`: replaces each well-formed
-    /// `{content:...}` token with a placeholder; unterminated tokens stay
-    /// as typed.
-    private static func replaceContentTokensForPreview(_ template: String) -> String {
-        guard template.contains("{content:") else { return template }
+    // MARK: - On-device AI tokens ({ai:QUESTION})
+
+    /// Expands every `{ai:QUESTION}` token by asking Apple's on-device model
+    /// (see `LocalAI`) for that value from the file's text — e.g.
+    /// `{ai:the owner's full name}`. Like `{content:...}`, a token that
+    /// gets no answer throws instead of leaving a gap in the name.
+    private static func expandAITokens(_ template: String, path: String) throws -> String {
+        guard template.contains("{ai:") else { return template }
+        var extractedText: String?
         var output = ""
         var scanFrom = template.startIndex
-        while let opening = template.range(of: "{content:", range: scanFrom..<template.endIndex) {
+        while let opening = template.range(of: "{ai:", range: scanFrom..<template.endIndex) {
+            output += template[scanFrom..<opening.lowerBound]
+            guard let (body, end) = scanContentToken(in: template, from: opening.upperBound) else {
+                throw TokenExpanderError.unterminatedToken(String(template[opening.lowerBound...].prefix(60)))
+            }
+            if extractedText == nil {
+                extractedText = ContentExtractor.extract(path: path).text
+            }
+            guard let text = extractedText, !text.isEmpty else {
+                throw LocalAIError.unreadableContent
+            }
+            let question = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            output += try LocalAI.extract(question: question, text: text, fileName: (path as NSString).lastPathComponent)
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+            scanFrom = end
+        }
+        output += template[scanFrom...]
+        return output
+    }
+
+    /// Non-throwing variant for `previewExpand`: replaces each well-formed
+    /// `{content:...}`/`{ai:...}` token with a placeholder; unterminated
+    /// tokens stay as typed.
+    private static func replaceTokensForPreview(_ template: String, prefix: String, placeholder: String) -> String {
+        guard template.contains(prefix) else { return template }
+        var output = ""
+        var scanFrom = template.startIndex
+        while let opening = template.range(of: prefix, range: scanFrom..<template.endIndex) {
             output += template[scanFrom..<opening.lowerBound]
             guard let (_, end) = scanContentToken(in: template, from: opening.upperBound) else {
                 return output + template[opening.lowerBound...]
             }
-            output += "content"
+            output += placeholder
             scanFrom = end
         }
         output += template[scanFrom...]
