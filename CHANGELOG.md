@@ -6,6 +6,7 @@ All notable changes to Forel are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- The dev build now signs its app bundle with an available code-signing identity, so macOS remembers folder- and volume-access permission grants across rebuilds instead of asking again every time.
 - Added a ready-to-import rule pack for property documents (matrícula/RGI with page and cartório capture, IPTU, escritura, locação, condomínio, aluguel, certidão); rules import disabled for a dry run before enabling.
 - Text recognition of images and scanned PDFs now prefers Portuguese with English fallback, so accents like "matrícula" survive matching and captures on Brazilian documents.
 - Rename captures support a `|padN` (2–9) transform that zero-pads purely numeric captures, so page numbers sort correctly (`fls02` before `fls10`).
