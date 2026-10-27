@@ -244,7 +244,7 @@ final class AppModel: ObservableObject {
     /// What the given policy would permanently delete right now, for the
     /// confirmation shown before turning a limit on or cleaning up by hand.
     func trashCleanupPreview(_ policy: TrashCleanupPolicy) async -> Result<[TrashItem], TrashCleanerError> {
-        await Task.detached(priority: .userInitiated) {
+        await Task.detached(priority: .userInitiated) { () -> Result<[TrashItem], TrashCleanerError> in
             do {
                 return .success(TrashCleaner.plan(policy, items: try TrashCleaner.items()))
             } catch let error as TrashCleanerError {

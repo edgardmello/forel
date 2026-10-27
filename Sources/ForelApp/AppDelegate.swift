@@ -16,6 +16,7 @@
 
 import AppKit
 import SwiftUI
+import ForelCore
 
 /// Closing the main window doesn't quit; Forel keeps running in the
 /// background and reopens the window from the menu bar, Finder or the Dock.

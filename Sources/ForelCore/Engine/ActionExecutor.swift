@@ -1343,7 +1343,7 @@ public enum ActionExecutor {
         case .color(let path, let previous):
             try FinderTags.setColorLabel(path, color: previous)
         case .derived(let created, let original, let backup):
-            if let backup, created != original, FileManager.default.fileExists(atPath: original) {
+            if backup != nil, created != original, FileManager.default.fileExists(atPath: original) {
                 throw ActionError("cannot restore \(original): a file already exists there")
             }
             if FileManager.default.fileExists(atPath: created) {

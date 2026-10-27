@@ -152,10 +152,13 @@ enum MediaConverter {
         var attributes = document.documentAttributes ?? [:]
         attributes[PDFDocumentAttribute.keywordsAttribute] = keywords(of: document) + [compressedMarker]
         document.documentAttributes = attributes
-        let written = document.write(to: URL(fileURLWithPath: destination), withOptions: [
-            .saveImagesAsJPEGOption: true,
-            .optimizeImagesForScreenOption: true,
-        ])
+        let options: [PDFDocumentWriteOption: Any]
+        if #available(macOS 13.4, *) {
+            options = [.saveImagesAsJPEGOption: true, .optimizeImagesForScreenOption: true]
+        } else {
+            options = [:]
+        }
+        let written = document.write(to: URL(fileURLWithPath: destination), withOptions: options)
         guard written else { throw ActionError("Couldn't write the compressed PDF") }
         let before = fileSize(source)
         let after = fileSize(destination)

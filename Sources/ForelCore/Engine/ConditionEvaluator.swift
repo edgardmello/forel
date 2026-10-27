@@ -385,9 +385,9 @@ public enum ConditionEvaluator {
         }
         guard rc == 0 else { return nil }
 
-        let secs = buf.withUnsafeBytes { $0.load(fromByteOffset: 4, as: Int64.self) }
+        let secs = buf.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 4, as: Int64.self) }
         if secs == 0 { return nil }
-        let nsecs = buf.withUnsafeBytes { $0.load(fromByteOffset: 12, as: Int64.self) }
+        let nsecs = buf.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 12, as: Int64.self) }
         return Date(timeIntervalSince1970: Double(secs) + Double(nsecs) / 1_000_000_000)
     }
 
