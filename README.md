@@ -125,6 +125,10 @@ Running the bare `swift run` binary instead makes macOS attribute permission
 prompts — removable volumes, Photos, automation — to the terminal or re-ask
 after every rebuild, so access to folders on external drives never sticks.
 
+To package a DMG, run `./build.sh` with no arguments: it asks what to build,
+for which architecture, and which version (suggesting the next one), then
+prints the equivalent one-line command. `./build.sh --help` lists all options.
+
 > Requires macOS 13 Ventura or later.
 
 ---

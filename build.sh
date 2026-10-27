@@ -4,6 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
+  ./build.sh                     (in a terminal: guided, asks what to build)
   ./build.sh [command] [arch] [version] [--sign] [--notarize]
 
 Commands:
@@ -21,6 +22,24 @@ Arguments:
   --sign    Sign the app and DMG with a Developer ID Application certificate
   --notarize
             Submit and staple the signed app and DMG using Notary API secrets
+  -i, --interactive
+            Always ask for anything missing (command, arch, version, signing)
+  --no-interactive
+            Never ask; use the defaults below (also implied by CI=true or
+            when stdin/stdout is not a terminal)
+  -h, --help
+            Show this help
+
+Interactive mode:
+  When run from a terminal without a command, or with package/release but no
+  version, build.sh asks for what is missing. For the version it suggests the
+  next patch/minor/major after the newest one found in git tags, CHANGELOG.md
+  and dist/release, and prints the equivalent one-line command before building.
+
+Non-interactive defaults:
+  command   release
+  arch      host architecture
+  version   the git tag at HEAD, otherwise v0.0.0-local
 
 Examples:
   ./build.sh
@@ -174,30 +193,219 @@ swift_release_build() {
   build_products_dir="$(swift build "${build_args[@]}" --show-bin-path)"
 }
 
-command="${1:-release}"
+# ---- Interactive mode ------------------------------------------------------
+# Kept bash 3.2 compatible (stock macOS): no mapfile, no read -i, no ${x,,}.
+
+# Prints a numbered menu on stderr and stores the picked option's value in
+# $choice. Args: title, default index (1-based), then "value|label" pairs.
+choose() {
+  local title="$1" default_index="$2" answer i
+  shift 2
+  local options=("$@")
+  while true; do
+    echo "" >&2
+    echo "$title" >&2
+    for ((i = 0; i < ${#options[@]}; i++)); do
+      local marker="  "
+      [[ $((i + 1)) -eq $default_index ]] && marker="> "
+      echo "  ${marker}$((i + 1))) ${options[$i]#*|}" >&2
+    done
+    read -r -p "Choose [${default_index}]: " answer || exit 1
+    answer="${answer:-$default_index}"
+    if [[ "$answer" =~ ^[0-9]+$ ]] && ((answer >= 1 && answer <= ${#options[@]})); then
+      choice="${options[$((answer - 1))]%%|*}"
+      return
+    fi
+    echo "Please enter a number between 1 and ${#options[@]}." >&2
+  done
+}
+
+# Asks a yes/no question. Args: question, default (y or n). Returns 0 for yes.
+confirm() {
+  local question="$1" default="$2" hint answer
+  if [[ "$default" == y ]]; then hint="Y/n"; else hint="y/N"; fi
+  while true; do
+    read -r -p "$question [$hint]: " answer || exit 1
+    answer="${answer:-$default}"
+    case "$answer" in
+      y|Y|yes|YES|Yes|s|S|sim|Sim) return 0 ;;
+      n|N|no|NO|No|nao|não|Não) return 1 ;;
+    esac
+    echo "Please answer y or n." >&2
+  done
+}
+
+is_version() {
+  [[ "${1#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]
+}
+
+# Newest released version found in git tags, CHANGELOG.md headers, and DMGs
+# already in dist/release (without the leading v), or nothing if none exist.
+latest_known_version() {
+  local dmg name
+  {
+    git -C "$repo_root" tag -l 2>/dev/null || true
+    sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' "$repo_root/CHANGELOG.md" 2>/dev/null || true
+    for dmg in "$dist_dir"/Forel-v*.dmg; do
+      [[ -e "$dmg" ]] || continue
+      name="${dmg##*/Forel-}"
+      name="${name%.dmg}"
+      echo "${name%-darwin-*}"
+    done
+  } | sed 's/^v//' |
+    grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' |
+    grep -vE -- '-(local|dev)$' |
+    sort -t. -k1,1n -k2,2n -k3,3n |
+    tail -n 1
+}
+
+# Bumps x.y.z[-suffix] by patch, minor, or major, keeping any suffix
+# (e.g. 1.3.5-fork -> 1.3.6-fork).
+bump_version() {
+  local current="$1" part="$2" core suffix="" major minor patch
+  core="${current%%-*}"
+  [[ "$current" == *-* ]] && suffix="-${current#*-}"
+  IFS=. read -r major minor patch <<<"$core"
+  case "$part" in
+    patch) patch=$((patch + 1)) ;;
+    minor) minor=$((minor + 1)); patch=0 ;;
+    major) major=$((major + 1)); minor=0; patch=0 ;;
+  esac
+  echo "${major}.${minor}.${patch}${suffix}"
+}
+
+ask_version() {
+  local latest head_tag options=() default_index=1 entered
+  head_tag="$(git -C "$repo_root" describe --tags --exact-match 2>/dev/null || true)"
+  latest="$(latest_known_version)"
+
+  if [[ -n "$head_tag" ]]; then
+    options+=("$head_tag|$head_tag (tag at the current commit)")
+  fi
+  if [[ -n "$latest" ]]; then
+    options+=("v$(bump_version "$latest" patch)|v$(bump_version "$latest" patch)  next patch: fixes only")
+    options+=("v$(bump_version "$latest" minor)|v$(bump_version "$latest" minor)  next minor: new features")
+    options+=("v$(bump_version "$latest" major)|v$(bump_version "$latest" major)  next major: breaking changes")
+  fi
+  options+=("custom|Type another version")
+  options+=("v0.0.0-local|v0.0.0-local  local test build, not for release")
+
+  local title="Version"
+  [[ -n "$latest" ]] && title="Version (newest found: v$latest)"
+  choose "$title" "$default_index" "${options[@]}"
+
+  if [[ "$choice" == custom ]]; then
+    while true; do
+      read -r -p "Version (e.g. v1.2.3 or v1.2.3-fork): " entered || exit 1
+      if is_version "$entered"; then
+        choice="$entered"
+        break
+      fi
+      echo "Use the form v1.2.3 (an optional -suffix is allowed)." >&2
+    done
+  fi
+  version="$choice"
+}
+
+run_interactive_setup() {
+  local host_arch summary
+  host_arch="$(uname -m)"
+  echo "Forel build — press Return to accept the default (marked with >)." >&2
+
+  if [[ "$command_given" != true ]]; then
+    choose "What do you want to do?" 4 \
+      "dev|dev      Build in debug and run Forel locally" \
+      "build|build    Release build only (no app bundle)" \
+      "test|test     Run the test suite" \
+      "package|package  Build Forel.app and a DMG to distribute" \
+      "release|release  Same as package"
+    command="$choice"
+  fi
+
+  if [[ "$arch_given" != true ]] && [[ "$command" == build || "$command" == package || "$command" == release ]]; then
+    local arch_default=1
+    [[ "$host_arch" == x86_64 ]] && arch_default=2
+    choose "Architecture" "$arch_default" \
+      "arm64|arm64      Apple silicon$([[ "$host_arch" == arm64 ]] && echo " (this Mac)")" \
+      "x86_64|x86_64     Intel$([[ "$host_arch" == x86_64 ]] && echo " (this Mac)")" \
+      "universal|universal  Apple silicon + Intel in one app"
+    arch="$choice"
+  fi
+
+  if [[ "$command" == package || "$command" == release ]]; then
+    [[ -z "$version" ]] && ask_version
+
+    echo "" >&2
+    if [[ "$sign_given" != true ]]; then
+      if confirm "Sign with your Developer ID Application certificate?" n; then
+        sign_requested=true
+      fi
+    fi
+    if [[ "$sign_requested" == true && "$notarize_given" != true ]]; then
+      if [[ -z "${NOTARY_API_KEY_P8:-}" || -z "${NOTARY_KEY_ID:-}" || -z "${NOTARY_ISSUER_ID:-}" ]]; then
+        echo "Skipping notarization: set NOTARY_API_KEY_P8, NOTARY_KEY_ID and NOTARY_ISSUER_ID to enable it." >&2
+      elif confirm "Notarize with Apple (takes a few minutes)?" n; then
+        notarize_requested=true
+      fi
+    fi
+  fi
+
+  summary="./build.sh $command"
+  if [[ "$command" == build || "$command" == package || "$command" == release ]]; then
+    summary+=" $arch"
+  fi
+  if [[ "$command" == package || "$command" == release ]]; then
+    summary+=" $version"
+    [[ "$sign_requested" == true ]] && summary+=" --sign"
+    [[ "$notarize_requested" == true ]] && summary+=" --notarize"
+  fi
+  echo "" >&2
+  echo "About to run: $summary" >&2
+  echo "(run that line directly next time to skip these questions)" >&2
+  if ! confirm "Continue?" y; then
+    echo "Cancelled." >&2
+    exit 1
+  fi
+  echo "" >&2
+}
+
+command="release"
+command_given=false
 if [[ $# -gt 0 ]]; then
   case "$1" in
-    -h|--help)
-      usage
-      exit 0
-      ;;
     dev|build|test|package|release)
       command="$1"
+      command_given=true
       shift
       ;;
   esac
 fi
 
 sign_requested=false
+sign_given=false
 notarize_requested=false
+notarize_given=false
+interactive_mode=auto
 positional_args=()
 for arg in "$@"; do
   case "$arg" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
     --sign)
       sign_requested=true
+      sign_given=true
       ;;
     --notarize)
       notarize_requested=true
+      notarize_given=true
+      ;;
+    -i|--interactive)
+      interactive_mode=always
+      ;;
+    --no-interactive)
+      interactive_mode=never
       ;;
     -*)
       echo "Unknown option: $arg" >&2
@@ -221,8 +429,25 @@ if [[ $# -gt 2 ]]; then
   exit 1
 fi
 
+arch_given=false
+[[ $# -ge 1 ]] && arch_given=true
 arch="${1:-$(uname -m)}"
 version="${2:-}"
+
+# Interactive mode only kicks in from a real terminal, so CI and scripts that
+# pass full arguments keep the exact same behavior.
+if [[ "$interactive_mode" == auto ]]; then
+  interactive_mode=never
+  if [[ -t 0 && -t 1 && -z "${CI:-}" ]]; then
+    if [[ "$command_given" != true ]] ||
+       { [[ "$command" == package || "$command" == release ]] && [[ -z "$version" ]]; }; then
+      interactive_mode=always
+    fi
+  fi
+fi
+if [[ "$interactive_mode" == always ]]; then
+  run_interactive_setup
+fi
 
 if [[ "$sign_requested" == true ]]; then
   if [[ "$command" != "package" && "$command" != "release" ]]; then
