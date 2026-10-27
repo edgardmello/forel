@@ -111,10 +111,19 @@ git clone https://github.com/lab421/forel.git
 cd forel
 swift build
 swift test
-swift run
 ```
 
-To build and package the app, use the Swift package tooling and the existing release workflow.
+To run it locally, prefer the dev bundle over the bare binary:
+
+```bash
+./build.sh dev
+```
+
+The dev command wraps the debug build in an `.app` bundle and signs it with a
+code-signing identity from your keychain (override with `CODESIGN_IDENTITY`).
+Running the bare `swift run` binary instead makes macOS attribute permission
+prompts — removable volumes, Photos, automation — to the terminal or re-ask
+after every rebuild, so access to folders on external drives never sticks.
 
 > Requires macOS 13 Ventura or later.
 
