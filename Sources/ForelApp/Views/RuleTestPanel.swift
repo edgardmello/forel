@@ -25,6 +25,12 @@ struct RuleTestPanel: View {
     let result: PreviewResult?
     let isTesting: Bool
 
+    /// Filters the zero-match diagnostics down to the (empty) match list.
+    /// Only offered while non-match samples are actually on screen — there
+    /// is nothing to filter when matches are shown (they already are the
+    /// only rows) or when no diagnostics were collected.
+    @State private var matchedOnly = false
+
     private var subtitle: String {
         guard let result else { return "" }
         let matchText = result.reachedMatchLimit
@@ -50,6 +56,13 @@ struct RuleTestPanel: View {
                     }
                 }
                 Spacer()
+                if !isTesting, let result, result.matches.isEmpty, !result.nonMatches.isEmpty {
+                    Toggle("Matched only", isOn: $matchedOnly)
+                        .font(.system(size: 10))
+                        .toggleStyle(.checkbox)
+                        .controlSize(.small)
+                        .foregroundStyle(ForelTheme.secondaryText)
+                }
                 if isTesting {
                     HStack(spacing: 6) {
                         ProgressView()
@@ -81,19 +94,26 @@ struct RuleTestPanel: View {
                                     .font(.system(size: 12))
                                     .foregroundStyle(ForelTheme.secondaryText)
                                     .padding(.vertical, 8)
-                                if result.reachedNonMatchLimit {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: "list.bullet.rectangle")
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundStyle(ForelTheme.accent)
-                                        Text("Showing the first \(result.nonMatches.count) non-matches.")
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(ForelTheme.secondaryText)
+                                if matchedOnly {
+                                    Text("Turn off “Matched only” to review why the other \(result.nonMatches.count) files didn't match.")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(ForelTheme.secondaryText)
+                                        .padding(.bottom, 12)
+                                } else {
+                                    if result.reachedNonMatchLimit {
+                                        HStack(spacing: 8) {
+                                            Image(systemName: "list.bullet.rectangle")
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .foregroundStyle(ForelTheme.accent)
+                                            Text("Showing the first \(result.nonMatches.count) non-matches.")
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundStyle(ForelTheme.secondaryText)
+                                        }
+                                        .padding(.bottom, 2)
                                     }
-                                    .padding(.bottom, 2)
-                                }
-                                ForEach(result.nonMatches, id: \.path) { nonMatch in
-                                    FilePreviewRow(match: nonMatch)
+                                    ForEach(result.nonMatches, id: \.path) { nonMatch in
+                                        FilePreviewRow(match: nonMatch)
+                                    }
                                 }
                             }
                         } else {
