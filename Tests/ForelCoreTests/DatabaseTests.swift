@@ -63,8 +63,51 @@ import SQLite3
         #expect(try db.countRules() == 3)
     }
 
+    @Test func moveRuleKeepsIdentityAndContentsAndAppendsInTarget() throws {
+        let db = try makeDB()
+        let first = WatchedFolder(path: "/tmp/forel-test-\(UUID().uuidString)")
+        let second = WatchedFolder(path: "/tmp/forel-test-\(UUID().uuidString)")
+        try db.insertFolder(first)
+        try db.insertFolder(second)
+
+        var source = makeRule(folderId: first.id, name: "RGI")
+        source.actions = [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["rgi"])]), ruleId: source.id)]
+        try db.insertRule(source)
+        try db.insertRule(makeRule(folderId: second.id, name: "existing"))
+
+        try db.moveRule(source.id, toFolder: second.id)
+
+        #expect(try db.listRules(folderId: first.id).isEmpty)
+        let moved = try #require(try db.listRules(folderId: second.id).last)
+        #expect(moved.id == source.id)
+        #expect(moved.name == "RGI")
+        #expect(moved.actions.map(\.kind) == [.addTag])
+    }
+
+    @Test func duplicatedRuleGetsFreshIdsAndStartsDisabled() throws {
+        let original = makeRule(
+            folderId: "folder",
+            name: "RGI",
+            conditions: [makeCondition(.name, .contains, "Invoice", ruleId: "")],
+            actions: [makeAction(.rename, .object([ActionParam.pattern: .string("{name}")]), ruleId: "")]
+        )
+
+        let copy = original.duplicated()
+
+        #expect(copy.id != original.id)
+        #expect(copy.folderId == original.folderId)
+        #expect(copy.name == "RGI (copy)")
+        #expect(!copy.enabled)
+        #expect(copy.conditionGroups.flatMap(\.conditions).allSatisfy { $0.ruleId == copy.id && $0.id != original.conditionGroups[0].conditions[0].id })
+        #expect(copy.actions.allSatisfy { $0.ruleId == copy.id })
+
+        let elsewhere = original.duplicated(inFolder: "other")
+        #expect(elsewhere.folderId == "other")
+    }
+
     @Test func menuBarIconPreferenceRoundTrips() throws {
         let db = try makeDB()
+
 
         try db.setSetting("show_menu_bar_icon", "0")
         #expect(try db.getSetting("show_menu_bar_icon") == "0")

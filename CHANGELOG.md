@@ -6,6 +6,8 @@ All notable changes to Forel are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- The rule list gained a filter field, Collapse All, and a Select mode for enabling, disabling, or deleting several rules at once.
+- Rule context menus now offer Duplicate, Move to another folder, and Copy to another folder; copies start disabled and moves keep each rule's history attached.
 - The rule editor's test results can now be filtered to matched files only, hiding the sample list of non-matches when you just want the count.
 - The dev build now signs its app bundle with an available code-signing identity, so macOS remembers folder- and volume-access permission grants across rebuilds instead of asking again every time.
 - Added a ready-to-import rule pack for property documents (matrícula/RGI with page and cartório capture, IPTU, escritura, locação, condomínio, aluguel, certidão); rules import disabled for a dry run before enabling.

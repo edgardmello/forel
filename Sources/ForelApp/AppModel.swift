@@ -639,6 +639,65 @@ final class AppModel: ObservableObject {
         reloadRules()
     }
 
+    /// Bulk enable/disable, used by "Enable All"/"Disable All" and by the
+    /// multi-selection toolbar.
+    func setRulesEnabled(_ rules: [Rule], _ enabled: Bool) {
+        guard !rules.isEmpty else { return }
+        db.withLock { db in
+            for rule in rules { try? db.toggleRule(rule.id, enabled: enabled) }
+        }
+        if !paused { coordinator.refreshWatchedPaths() }
+        reloadRules()
+    }
+
+    func deleteRules(_ rules: [Rule]) {
+        guard !rules.isEmpty else { return }
+        db.withLock { db in
+            for rule in rules { try? db.deleteRule(rule.id) }
+        }
+        clearRuleExpansionState(Set(rules.map(\.id)))
+        if !paused { coordinator.refreshWatchedPaths() }
+        reloadRules()
+    }
+
+    /// Duplicates a rule (same folder by default, another folder for "Copy to")
+    /// with fresh identifiers. The copy starts disabled so it never doubles
+    /// up on files the original already acts on.
+    func duplicateRule(_ rule: Rule, toFolder folderId: String? = nil) {
+        let clone = rule.duplicated(inFolder: folderId)
+        db.withLock { db in try? db.insertRule(clone) }
+        if !paused { coordinator.refreshWatchedPaths() }
+        reloadRules()
+        let destination = folderId == nil
+            ? nil
+            : folders.first { $0.id == folderId }?.path.split(separator: "/").last.map(String.init)
+        showRunNowMessage(RunNowMessage(
+            text: destination.map { "Copied “\(rule.name)” to \($0) — starts disabled" }
+                ?? "Duplicated “\(rule.name)” — starts disabled",
+            hasFailures: false,
+            folderId: selectedFolderId ?? ""
+        ))
+    }
+
+    /// Moves a rule to another folder, keeping its id (and history) intact.
+    func moveRule(_ rule: Rule, toFolder folderId: String) {
+        guard folderId != rule.folderId else { return }
+        db.withLock { db in try? db.moveRule(rule.id, toFolder: folderId) }
+        clearRuleExpansionState(rule.id)
+        if !paused { coordinator.refreshWatchedPaths() }
+        reloadRules()
+        let destination = folders.first { $0.id == folderId }?.path.split(separator: "/").last.map(String.init) ?? "folder"
+        showRunNowMessage(RunNowMessage(
+            text: "Moved “\(rule.name)” to \(destination)",
+            hasFailures: false,
+            folderId: selectedFolderId ?? ""
+        ))
+    }
+
+    func collapseAllRules() {
+        db.withLock { db in ruleExpansionPreferences.collapseAll(rules, in: db) }
+    }
+
     func reorderRules(_ ruleIds: [String]) {
         guard let folderId = selectedFolderId else { return }
         db.withLock { db in try? db.reorderRules(folderId: folderId, ruleIds: ruleIds) }
