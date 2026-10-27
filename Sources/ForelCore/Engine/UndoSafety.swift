@@ -64,6 +64,21 @@ public enum UndoChecker {
             guard FileManager.default.fileExists(atPath: entry.resultPath) else {
                 return .unsafe(reason: "The file no longer exists at its expected location.")
             }
+        case .derived(let created, let original, let backup):
+            guard FileManager.default.fileExists(atPath: created) else {
+                return .unsafe(reason: "The file Forel converted no longer exists at \((created as NSString).lastPathComponent).")
+            }
+            if let mismatch = identityMismatchReason(entry, currentPath: created) {
+                return .unsafe(reason: mismatch)
+            }
+            if let backup {
+                guard FileManager.default.fileExists(atPath: backup) else {
+                    return .unsafe(reason: "The original file is no longer in the Trash, so it can't be put back.")
+                }
+                if created != original, FileManager.default.fileExists(atPath: original) {
+                    return .unsafe(reason: "A file already exists at the original location.")
+                }
+            }
         }
 
         // Copy-undo only deletes the copy — the original is never restored
@@ -95,12 +110,16 @@ public enum UndoChecker {
         switch Undo.fromJSON(entry.undo) {
         case .move(let from, _): return from
         case .addTags(let path, _), .removeTags(let path, _), .color(let path, _): return path
+        case .derived(_, let original, let backup): return backup == nil ? nil : original
         case .copy, .none: return nil
         }
     }
 
+    /// Undos that only remove something Forel created, restoring nothing
+    /// a rule could pick up again.
     private static func isCopyUndo(_ undo: Undo) -> Bool {
         if case .copy = undo { return true }
+        if case .derived(_, _, nil) = undo { return true }
         return false
     }
 

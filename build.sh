@@ -155,6 +155,17 @@ write_info_plist() {
   <string>Forel can import images and videos into your Photos library as part of automated rules.</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>Forel uses automation to add files to the Music and TV libraries as part of automated rules.</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.lab421.forel</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>forel</string>
+      </array>
+    </dict>
+  </array>
 ${extra_keys}
 </dict>
 </plist>

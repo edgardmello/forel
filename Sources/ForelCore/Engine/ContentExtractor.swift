@@ -503,6 +503,24 @@ public enum ContentExtractor {
     /// by image and scanned-PDF extraction. Times out after 30 seconds to avoid
     /// hanging the caller when the Vision framework is unresponsive.
     private static func recognizeText(in cgImage: CGImage) -> String? {
+        let text = recognizeTextLines(in: cgImage)
+            .map(\.text)
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    /// One recognized line of text and where it sits in the image, as a
+    /// normalized rectangle with its origin at the bottom left (Vision's
+    /// convention, which is also PDF's).
+    struct RecognizedLine: Sendable {
+        let text: String
+        let box: CGRect
+    }
+
+    /// The lines behind `recognizeText`, with their positions — what the
+    /// Make PDF Searchable action lays its invisible text layer from.
+    static func recognizeTextLines(in cgImage: CGImage) -> [RecognizedLine] {
         nonisolated(unsafe) let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
@@ -521,21 +539,26 @@ public enum ContentExtractor {
         // blocks until the background closure signals, so there's no actual
         // concurrent access — just the compiler unable to see that VNRequest
         // types aren't Sendable for a reason that applies here.
-        nonisolated(unsafe) var resultText: String?
+        nonisolated(unsafe) var lines: [RecognizedLine] = []
         DispatchQueue.global(qos: .userInitiated).async {
             guard (try? handler.perform([request])) != nil, let observations = request.results else {
                 semaphore.signal()
                 return
             }
-            let text = observations
-                .compactMap { $0.topCandidates(1).first?.string }
-                .joined(separator: "\n")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            resultText = text.isEmpty ? nil : text
+            lines = observations.compactMap { observation in
+                guard let string = observation.topCandidates(1).first?.string,
+                      !string.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+                return RecognizedLine(text: string, box: observation.boundingBox)
+            }
             semaphore.signal()
         }
         _ = semaphore.wait(timeout: .now() + 30)
-        return resultText
+        return lines
+    }
+
+    /// Renders a PDF page for OCR at the same scale text extraction uses.
+    static func renderForOCR(_ page: PDFPage) -> CGImage? {
+        renderPDFPage(page)
     }
 
     // MARK: - Helpers

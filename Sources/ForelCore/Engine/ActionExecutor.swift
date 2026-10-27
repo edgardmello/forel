@@ -52,6 +52,10 @@ public enum Undo: Equatable, Sendable {
     case removeTags(path: String, tags: [String])
     /// Colour label changed; undo by restoring `previous` ("" = none).
     case color(path: String, previous: String)
+    /// A conversion wrote `created` (a new file, or the original's path
+    /// rewritten in place). Undo moves `created` to the Trash and, when the
+    /// original was set aside in `backup`, puts it back at `original`.
+    case derived(created: String, original: String, backup: String?)
     /// Not reversible (e.g. a script with arbitrary side effects).
     case none
 
@@ -72,6 +76,10 @@ public enum Undo: Equatable, Sendable {
             return .object(["kind": .string("remove_tags"), "path": .string(path), "tags": .stringArray(tags)])
         case .color(let path, let previous):
             return .object(["kind": .string("color"), "path": .string(path), "previous": .string(previous)])
+        case .derived(let created, let original, let backup):
+            var object: [String: JSONValue] = ["kind": .string("derived"), "created": .string(created), "original": .string(original)]
+            if let backup { object["backup"] = .string(backup) }
+            return .object(object)
         case .none:
             return .object(["kind": .string("none")])
         }
@@ -90,6 +98,12 @@ public enum Undo: Equatable, Sendable {
             return .removeTags(path: json["path"]?.stringValue ?? "", tags: (json["tags"]?.arrayValue ?? []).compactMap(\.stringValue))
         case "color":
             return .color(path: json["path"]?.stringValue ?? "", previous: json["previous"]?.stringValue ?? "")
+        case "derived":
+            return .derived(
+                created: json["created"]?.stringValue ?? "",
+                original: json["original"]?.stringValue ?? "",
+                backup: json["backup"]?.stringValue
+            )
         default:
             return .none
         }
@@ -294,6 +308,12 @@ public enum ActionExecutor {
         case .displayNotification:
             displayNotification(action, path: path)
             return Applied(newPath: path, undo: .none)
+        case .convertImage:
+            return try convertImage(action, path: path)
+        case .compressPDF:
+            return try compressPDF(path: path)
+        case .makeSearchablePDF:
+            return try makeSearchablePDF(action, path: path)
         }
     }
 
@@ -1322,6 +1342,17 @@ public enum ActionExecutor {
             for tag in tags { try FinderTags.apply(path, tag: tag, add: true) }
         case .color(let path, let previous):
             try FinderTags.setColorLabel(path, color: previous)
+        case .derived(let created, let original, let backup):
+            if let backup, created != original, FileManager.default.fileExists(atPath: original) {
+                throw ActionError("cannot restore \(original): a file already exists there")
+            }
+            if FileManager.default.fileExists(atPath: created) {
+                let trashed = uniqueDest(dir: try trashDir(), fileName: (created as NSString).lastPathComponent)
+                try FileManager.default.moveItem(atPath: created, toPath: trashed)
+            }
+            if let backup {
+                try FileManager.default.moveItem(atPath: backup, toPath: original)
+            }
         case .none:
             throw ActionError("this action cannot be undone")
         }
@@ -1794,6 +1825,8 @@ public enum ActionExecutor {
                 copiedPath: nil,
                 isTerminal: false
             )
+        case .convertImage, .compressPDF, .makeSearchablePDF:
+            return conversionPlan(action, path: path)
         case .displayNotification:
             let title = action.params[ActionParam.notificationTitle]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return ActionPlan(kind: action.kind, description: title.isEmpty ? "Display notification" : "Display notification: \(title)", sourcePath: path, targetPath: nil, status: .wouldRun, finalPath: path, copiedPath: nil, isTerminal: false)        }
@@ -1814,7 +1847,7 @@ public enum ActionExecutor {
             let pattern = action.params[ActionParam.pattern]?.stringValue ?? ""
             guard let newName = try? applyRenamePattern(pattern, path: path) else { return true }
             return (path as NSString).lastPathComponent != newName
-        case .moveToFolder, .copyToFolder, .sortIntoSubfolder, .syncToFolder, .syncFolders, .upload, .moveToTrash, .delete, .addComment, .toggleExtension, .toggleLock, .archive, .runScript, .runShortcut, .openApplication, .open, .showInFinder, .makeAlias, .importToLibrary, .uncompress, .runRulesOnFolderContents, .ignore, .runAppleScript, .runJavaScript, .runAutomatorWorkflow, .pause, .displayNotification:
+        case .moveToFolder, .copyToFolder, .sortIntoSubfolder, .syncToFolder, .syncFolders, .upload, .moveToTrash, .delete, .addComment, .toggleExtension, .toggleLock, .archive, .runScript, .runShortcut, .openApplication, .open, .showInFinder, .makeAlias, .importToLibrary, .uncompress, .runRulesOnFolderContents, .ignore, .runAppleScript, .runJavaScript, .runAutomatorWorkflow, .pause, .displayNotification, .convertImage, .compressPDF, .makeSearchablePDF:
             return true
         }
     }
@@ -2095,7 +2128,7 @@ public enum ActionExecutor {
 
     /// Returns a destination path that does not yet exist, appending ` (N)` to
     /// the stem when the intended name is already taken.
-    private static func uniqueDest(dir: String, fileName: String) -> String {
+    static func uniqueDest(dir: String, fileName: String) -> String {
         let candidate = (dir as NSString).appendingPathComponent(fileName)
         if !FileManager.default.fileExists(atPath: candidate) { return candidate }
 
@@ -2112,7 +2145,7 @@ public enum ActionExecutor {
         }
     }
 
-    private static func trashDir() throws -> String {
+    static func trashDir() throws -> String {
         guard let home = ProcessInfo.processInfo.environment["HOME"] else {
             throw ActionError("HOME not set")
         }

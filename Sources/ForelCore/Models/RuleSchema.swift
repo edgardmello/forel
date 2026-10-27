@@ -75,6 +75,9 @@ public enum ConditionValueKind: Sendable, Equatable {
     /// Free text combined with a suggestion list (e.g. installed apps) —
     /// still a plain string value underneath, just with autocomplete.
     case appPicker
+    /// Where a `duplicate` condition looks for an identical file
+    /// (`DuplicateScope`).
+    case duplicateScope
 }
 
 // MARK: - Condition kinds
@@ -104,6 +107,10 @@ public extension ConditionKind {
         case .downloadedFromWebsite: return "Downloaded from website"
         case .downloadedWithApp: return "Downloaded with app"
         case .rawWhereFromMetadata: return "Raw where-from metadata"
+        case .dateLastMatched: return "Date last matched"
+        case .timesMatched: return "Times matched"
+        case .duplicate: return "Duplicate"
+        case .aiClassification: return "Document (AI)"
         }
     }
 
@@ -112,11 +119,11 @@ public extension ConditionKind {
     /// `RuleSchemaTests`.
     var validOperators: [Operator] {
         switch self {
-        case .createdAt, .dateModified, .dateAdded, .lastOpened, .photoDateTaken:
+        case .createdAt, .dateModified, .dateAdded, .lastOpened, .photoDateTaken, .dateLastMatched:
             return [.before, .after, .olderThan, .withinLast]
-        case .sizeBytes, .itemCount, .imageWidth, .imageHeight, .pdfPageCount:
+        case .sizeBytes, .itemCount, .imageWidth, .imageHeight, .pdfPageCount, .timesMatched:
             return [.is, .isNot, .greaterThan, .lessThan]
-        case .kind, .colorLabel:
+        case .kind, .colorLabel, .duplicate, .aiClassification:
             return [.is, .isNot]
         case .name, .extension_, .tags, .contents, .finderComment, .filePath, .spotlightMetadata,
              .downloadedFromWebsite, .rawWhereFromMetadata:
@@ -136,9 +143,11 @@ public extension ConditionKind {
         switch self {
         case .kind: return .fileKind
         case .sizeBytes: return .size
-        case .itemCount, .imageWidth, .imageHeight, .pdfPageCount: return .number
+        case .itemCount, .imageWidth, .imageHeight, .pdfPageCount, .timesMatched: return .number
         case .colorLabel: return .colorLabel
-        case .createdAt, .dateModified, .dateAdded, .lastOpened, .photoDateTaken: return .absoluteDate
+        case .createdAt, .dateModified, .dateAdded, .lastOpened, .photoDateTaken, .dateLastMatched: return .absoluteDate
+        case .duplicate: return .duplicateScope
+        case .aiClassification: return .text
         case .spotlightMetadata: return .spotlightMetadata
         case .name, .extension_, .tags, .contents, .finderComment, .filePath,
              .downloadedFromWebsite, .rawWhereFromMetadata: return .text
@@ -170,6 +179,10 @@ public extension ConditionKind {
         case .downloadedFromWebsite: return "globe"
         case .downloadedWithApp: return "macwindow"
         case .rawWhereFromMetadata: return "curlybraces"
+        case .dateLastMatched: return "clock.badge.checkmark"
+        case .timesMatched: return "number"
+        case .duplicate: return "plus.square.on.square"
+        case .aiClassification: return "sparkles"
         }
     }
 
@@ -184,6 +197,14 @@ public extension ConditionKind {
             return "Matches text from plain files, PDFs, Word documents, and images via OCR when available."
         case .spotlightMetadata:
             return "Enter a Spotlight key (for example kMDItemAuthors) and the value to match. Availability depends on macOS indexing."
+        case .dateLastMatched:
+            return "When this rule last matched the file. A file the rule never matched counts as matched long ago, so \"is older than\" includes it."
+        case .timesMatched:
+            return "How many times this rule matched the file before. \"Is 0\" means the first time only."
+        case .duplicate:
+            return "Matches when another file with exactly the same contents is already there. The oldest copy is never a duplicate, so it is the one that stays."
+        case .aiClassification:
+            return "Apple Intelligence reads the file's text on this Mac and decides whether it fits your description, e.g. \"a bank slip (boleto)\". Needs macOS 26 with Apple Intelligence turned on."
         default:
             return nil
         }
@@ -208,6 +229,23 @@ public enum FileKindCatalog {
         ("folder", "Folder"),
         ("application", "Application"),
     ]
+}
+
+// MARK: - Duplicate scope (for the `duplicate` condition)
+
+/// Which files a `duplicate` condition compares the matched file with.
+public enum DuplicateScope: String, CaseIterable, Sendable {
+    /// Only the files next to it.
+    case sameFolder = "same_folder"
+    /// The files next to it and everything in the subfolders of its folder.
+    case sameFolderTree = "same_folder_tree"
+
+    public var label: String {
+        switch self {
+        case .sameFolder: return "in the same folder"
+        case .sameFolderTree: return "in the same folder or its subfolders"
+        }
+    }
 }
 
 // MARK: - Action parameters
@@ -240,6 +278,9 @@ public enum ActionParam {
     public static let workflowPath = "workflow_path"
     public static let notificationTitle = "notification_title"
     public static let notificationBody = "notification_body"
+    public static let imageFormat = "image_format"
+    public static let maxDimension = "max_dimension"
+    public static let keepOriginal = "keep_original"
 }
 
 /// Where a script action's code comes from: typed into Forel, or a script
@@ -310,6 +351,7 @@ public enum ActionParamKind: Sendable, Equatable {
     case playlist
     case duration
     case filePath
+    case imageFormat
 }
 
 public struct ActionParamSpec: Sendable, Equatable {
@@ -356,7 +398,11 @@ public extension ActionKind {
         case .pause: return "Pause"
         case .displayNotification: return "Display notification"
         case .runRulesOnFolderContents: return "Run rules on folder contents"
-        case .ignore: return "Ignore"        }
+        case .ignore: return "Ignore"
+        case .convertImage: return "Convert image"
+        case .compressPDF: return "Compress PDF"
+        case .makeSearchablePDF: return "Make PDF searchable"
+        }
     }
 
     /// SF Symbol used to represent the action in the UI (e.g. activity history).
@@ -390,7 +436,11 @@ public extension ActionKind {
         case .pause: return "pause.circle"
         case .displayNotification: return "bell"
         case .runRulesOnFolderContents: return "folder.badge.play"
-        case .ignore: return "eye.slash"        }
+        case .ignore: return "eye.slash"
+        case .convertImage: return "photo.on.rectangle.angled"
+        case .compressPDF: return "arrow.down.right.and.arrow.up.left"
+        case .makeSearchablePDF: return "doc.text.viewfinder"
+        }
     }
 
     /// Whether this action kind has an "Options" popover in the rule editor
@@ -399,9 +449,10 @@ public extension ActionKind {
     /// have none, instead of showing an empty "No options" popover.
     var hasOptions: Bool {
         switch self {
-        case .moveToFolder, .copyToFolder, .sortIntoSubfolder, .syncToFolder, .syncFolders, .runShortcut, .openApplication, .rename, .importToLibrary, .uncompress:
+        case .moveToFolder, .copyToFolder, .sortIntoSubfolder, .syncToFolder, .syncFolders, .runShortcut, .openApplication, .rename, .importToLibrary, .uncompress, .convertImage:
             return true
-        case .upload, .addTag, .removeTag, .setColorLabel, .addComment, .toggleExtension, .toggleLock, .archive, .runScript, .runAppleScript, .runJavaScript, .runAutomatorWorkflow, .open, .showInFinder, .makeAlias, .moveToTrash, .delete, .pause, .displayNotification, .runRulesOnFolderContents, .ignore:            return false
+        case .upload, .addTag, .removeTag, .setColorLabel, .addComment, .toggleExtension, .toggleLock, .archive, .runScript, .runAppleScript, .runJavaScript, .runAutomatorWorkflow, .open, .showInFinder, .makeAlias, .moveToTrash, .delete, .pause, .displayNotification, .runRulesOnFolderContents, .ignore, .compressPDF, .makeSearchablePDF:
+            return false
         }
     }
 
@@ -445,7 +496,11 @@ public extension ActionKind {
         case .displayNotification:
             return [ActionParamSpec(key: ActionParam.notificationTitle, kind: .text),
                     ActionParamSpec(key: ActionParam.notificationBody, kind: .text)]
-        case .moveToTrash, .delete, .uncompress:            return []
+        case .convertImage:
+            return [ActionParamSpec(key: ActionParam.imageFormat, kind: .imageFormat),
+                    ActionParamSpec(key: ActionParam.maxDimension, kind: .text)]
+        case .compressPDF, .makeSearchablePDF:
+            return []
         }
     }
 }
@@ -482,10 +537,16 @@ public enum RuleSchema {
         ConditionKindGroup(title: nil, kinds: [
             .name, .extension_, .kind, .sizeBytes, .tags, .colorLabel, .contents,
             .createdAt, .dateModified, .dateAdded, .finderComment, .filePath, .itemCount,
-            .lastOpened, .imageWidth, .imageHeight, .photoDateTaken, .pdfPageCount,
+            .lastOpened, .imageWidth, .imageHeight, .photoDateTaken, .pdfPageCount, .duplicate,
+        ]),
+        ConditionKindGroup(title: "Rule history", kinds: [
+            .dateLastMatched, .timesMatched,
         ]),
         ConditionKindGroup(title: "Metadata", kinds: [
             .downloadedFromWebsite, .downloadedWithApp, .spotlightMetadata,
+        ]),
+        ConditionKindGroup(title: "Apple Intelligence", kinds: [
+            .aiClassification,
         ]),
     ]
 
@@ -493,6 +554,7 @@ public enum RuleSchema {
 
     public static let actionKindGroups: [ActionKindGroup] = [
         ActionKindGroup(title: nil, kinds: [.moveToFolder, .copyToFolder, .syncFolders, .rename, .sortIntoSubfolder, .syncToFolder, .archive, .upload, .uncompress]),
+        ActionKindGroup(title: "Convert", kinds: [.convertImage, .compressPDF, .makeSearchablePDF]),
         ActionKindGroup(title: "Tags", kinds: [.addTag, .removeTag, .setColorLabel]),
 ActionKindGroup(title: "Finder", kinds: [.addComment, .toggleExtension, .toggleLock, .open, .showInFinder, .makeAlias]),
         ActionKindGroup(title: "Automation", kinds: [.runScript, .runShortcut, .openApplication, .runAppleScript, .runJavaScript, .runAutomatorWorkflow, .pause, .displayNotification]),

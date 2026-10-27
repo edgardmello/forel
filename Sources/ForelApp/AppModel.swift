@@ -60,6 +60,11 @@ final class AppModel: ObservableObject {
     @Published var wantsLaunchAtLogin = false
     @Published var watcherNotificationsEnabled: Bool = true
     @Published var historyMaxDays: Int = 30
+    /// Minutes between re-checks of time-dependent rules; 0 turns them off.
+    @Published private(set) var recheckIntervalMinutes: Int = 30
+    @Published private(set) var trashCleanupPolicy = TrashCleanupPolicy()
+    /// Why the last automatic Trash cleanup couldn't run, if it couldn't.
+    @Published private(set) var trashCleanupError: String?
     /// Bumped whenever the accent colour changes, so views can force a full
     /// re-render with `.id(model.accentVersion)` — `ForelTheme.accent` is a
     /// plain static var, not itself observable.
@@ -85,6 +90,8 @@ final class AppModel: ObservableObject {
     private let ruleTestNonMatchSampleLimit = 5
     private let ruleRunStatsWindowDays = 30
     private var historyCleanupTimer: AnyCancellable?
+    private var recheckTimer: AnyCancellable?
+    private var wakeObserver: NSObjectProtocol?
     private var pendingWatcherNotification = PendingWatcherNotification()
     private var watcherNotificationTask: Task<Void, Never>?
     private var volumeNotifier = VolumeUnavailableNotifier()
@@ -112,6 +119,7 @@ final class AppModel: ObservableObject {
 
         let db = try Database(path: dbPath)
         self.db = db
+        RuleMatchMemory.shared.attach(db)
         self.hazelAppURL = Self.locateHazel()
         self.coordinator = WatcherCoordinator(db: db)
         self.coordinator.onActivity = { [weak self] summary in
@@ -159,12 +167,114 @@ final class AppModel: ObservableObject {
 
         self.ruleExpansionPreferences = db.withLock { db in RuleExpansionPreferences.load(from: db) }
 
+        let storedRecheck = db.withLock { db in (try? db.getSetting("recheck_interval_minutes")).flatMap { Int($0) } }
+        self.recheckIntervalMinutes = max(storedRecheck ?? 30, 0)
+        self.trashCleanupPolicy = db.withLock { db in
+            TrashCleanupPolicy(
+                maxAgeDays: (try? db.getSetting("trash_max_age_days")).flatMap { Int($0) }.flatMap { $0 > 0 ? $0 : nil },
+                maxSizeBytes: (try? db.getSetting("trash_max_size_gb")).flatMap { Double($0) }.flatMap { $0 > 0 ? UInt64($0 * 1_073_741_824) : nil }
+            )
+        }
+
         reloadFolders()
         let hazelPromptSeen = db.withLock { db in (try? db.getSetting("hazel_import_prompt_seen")) == "1" }
         showHazelImportAssistant = !hazelPromptSeen && folders.isEmpty && hazelAppURL != nil
         startWatchingEnabledFolders()
         startHistoryCleanupTimer()
+        startRecheckTimer()
         observeVolumeMounts()
+        observeWake()
+        if recheckIntervalMinutes > 0 { recheckNow() }
+    }
+
+    // MARK: - Periodic re-check
+
+    /// Choices offered in Settings, in minutes (0 = off).
+    static let recheckIntervalChoices = [0, 5, 15, 30, 60, 180]
+
+    func setRecheckIntervalMinutes(_ minutes: Int) {
+        let clamped = max(minutes, 0)
+        guard clamped != recheckIntervalMinutes else { return }
+        recheckIntervalMinutes = clamped
+        db.withLock { db in try? db.setSetting("recheck_interval_minutes", "\(clamped)") }
+        startRecheckTimer()
+    }
+
+    private func startRecheckTimer() {
+        recheckTimer = nil
+        guard recheckIntervalMinutes > 0 else { return }
+        let interval = TimeInterval(recheckIntervalMinutes * 60)
+        recheckTimer = Timer.publish(every: interval, tolerance: min(interval / 10, 60), on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.recheckNow() }
+    }
+
+    /// Re-checks time-dependent rules on every folder unless watching is
+    /// paused — pausing means no rule runs on its own.
+    func recheckNow() {
+        guard !paused else { return }
+        coordinator.recheckTimeDependentRules()
+    }
+
+    /// A Mac that slept through the scheduled re-checks catches up on wake.
+    private func observeWake() {
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.recheckIntervalMinutes > 0 else { return }
+                self.recheckNow()
+            }
+        }
+    }
+
+    // MARK: - Trash cleanup
+
+    func setTrashCleanupPolicy(_ policy: TrashCleanupPolicy) {
+        trashCleanupPolicy = policy
+        db.withLock { db in
+            try? db.setSetting("trash_max_age_days", "\(policy.maxAgeDays ?? 0)")
+            let gigabytes = policy.maxSizeBytes.map { Double($0) / 1_073_741_824 } ?? 0
+            try? db.setSetting("trash_max_size_gb", "\(gigabytes)")
+        }
+    }
+
+    /// What the given policy would permanently delete right now, for the
+    /// confirmation shown before turning a limit on or cleaning up by hand.
+    func trashCleanupPreview(_ policy: TrashCleanupPolicy) async -> Result<[TrashItem], TrashCleanerError> {
+        await Task.detached(priority: .userInitiated) {
+            do {
+                return .success(TrashCleaner.plan(policy, items: try TrashCleaner.items()))
+            } catch let error as TrashCleanerError {
+                return .failure(error)
+            } catch {
+                return .failure(.cannotReadTrash)
+            }
+        }.value
+    }
+
+    /// Applies the saved policy now. Deleted items are recorded in Activity.
+    func runTrashCleanup() {
+        let policy = trashCleanupPolicy
+        guard policy.isEnabled else { return }
+        Task {
+            let outcome = await Task.detached(priority: .background) { [db] () -> String? in
+                do {
+                    let result = try TrashCleaner.clean(policy)
+                    let entries = TrashCleaner.historyEntries(deleted: result.deleted, failed: result.failed)
+                    if !entries.isEmpty {
+                        db.withLock { db in try? db.insertHistoryEntries(entries) }
+                    }
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            }.value
+            trashCleanupError = outcome
+            reloadHistory()
+        }
     }
 
     /// A disk or share coming back runs the rules again on the files that
@@ -305,8 +415,12 @@ final class AppModel: ObservableObject {
     private func startHistoryCleanupTimer() {
         historyCleanupTimer = Timer.publish(every: historyCleanupInterval, tolerance: 60, on: .main, in: .common)
             .autoconnect()
-            .sink { [weak self] _ in self?.runHistoryCleanup() }
+            .sink { [weak self] _ in
+                self?.runHistoryCleanup()
+                self?.runTrashCleanup()
+            }
         runHistoryCleanup()
+        runTrashCleanup()
     }
 
     private func queueWatcherNotification(_ summary: WatcherActivitySummary) {
@@ -707,11 +821,20 @@ final class AppModel: ObservableObject {
     /// Runs all enabled rules in the selected folder against every file
     /// currently in it (a manual "Run Now"), bounded by each rule's scope.
     func runNow() {
-        guard !isRunningNow else { return }
         guard let folder = folders.first(where: { $0.id == selectedFolderId }) else { return }
-        let folderRules = rules.filter(\.enabled)
+        runNow(folder: folder, rules: rules.filter(\.enabled))
+    }
+
+    /// Run Now on `folder` with `folderRules`. `notifies` also posts the
+    /// result as a notification — for runs started from a `forel://` link,
+    /// where the window may not be open.
+    private func runNow(folder: WatchedFolder, rules folderRules: [Rule], notifies: Bool = false) {
+        guard !isRunningNow else { return }
         guard !folderRules.isEmpty else {
             showRunNowMessage(RunNowMessage(text: "Run complete — no enabled rules", hasFailures: false, folderId: folder.id))
+            if notifies {
+                Task { await postNotification(title: "Forel", body: "\((folder.path as NSString).lastPathComponent): no enabled rules to run") }
+            }
             return
         }
         isRunningNow = true
@@ -732,11 +855,66 @@ final class AppModel: ObservableObject {
                 db.withLock { db in try? db.insertHistoryEntries(allHistory) }
             }
             reloadHistory()
+            let summary = RunSummary.message(for: allHistory)
             showRunNowMessage(RunNowMessage(
-                text: RunSummary.message(for: allHistory),
+                text: summary,
                 hasFailures: allHistory.contains { $0.status == .failed },
                 folderId: folder.id
             ))
+            if notifies {
+                await postNotification(title: (folder.path as NSString).lastPathComponent, body: summary)
+            }
+        }
+    }
+
+    // MARK: - forel:// links
+
+    /// Parses and carries out a `forel://` link.
+    func handle(url: URL) {
+        guard let command = ForelURLCommand(url: url) else {
+            showNotice(title: "Unknown Forel link", message: "Forel doesn't understand “\(url.absoluteString)”. Settings → Automation lists the links it supports.")
+            return
+        }
+        handle(command)
+    }
+
+    /// Carries out a `forel://` link. Unknown links and links naming a
+    /// folder or rule that doesn't exist explain what went wrong.
+    func handle(_ command: ForelURLCommand) {
+        switch command {
+        case .runFolder(let path):
+            guard let folder = folders.first(where: { ($0.path as NSString).standardizingPath == path }) else {
+                showNotice(title: "Can't run that folder", message: "“\(path)” isn't one of Forel's watched folders. Add it in the sidebar first, or check the path in the link.")
+                return
+            }
+            let folderRules = db.withLock { db in (try? db.listRules(folderId: folder.id)) ?? [] }.filter(\.enabled)
+            runNow(folder: folder, rules: folderRules, notifies: true)
+        case .runRule(let nameOrId):
+            let match = db.withLock { db -> (WatchedFolder, Rule)? in
+                let folders = (try? db.listFolders()) ?? []
+                for folder in folders {
+                    let rules = (try? db.listRules(folderId: folder.id)) ?? []
+                    if let rule = rules.first(where: { $0.id == nameOrId || $0.name.localizedCaseInsensitiveCompare(nameOrId) == .orderedSame }) {
+                        return (folder, rule)
+                    }
+                }
+                return nil
+            }
+            guard let match else {
+                showNotice(title: "Can't find that rule", message: "No rule is named “\(nameOrId)”. Check the rule's name in the link — it has to match exactly, apart from capitalization.")
+                return
+            }
+            var runnable = match.1
+            runnable.enabled = true
+            runNow(folder: match.0, rules: [runnable], notifies: true)
+        case .recheck:
+            recheckNow()
+        case .pause:
+            if !paused { togglePaused() }
+        case .resume:
+            if paused { togglePaused() }
+        case .open:
+            break
         }
     }
 

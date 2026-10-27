@@ -144,6 +144,101 @@ public enum ConditionEvaluator {
 
         case .rawWhereFromMetadata:
             return matchAnyOf(condition.operator, DownloadMetadata.whereFroms(path), condition.value)
+
+        case .dateLastMatched:
+            // Never matched counts as matched infinitely long ago: it is
+            // older than any duration and before any date, and never
+            // after/within one — so "is older than 30 days" also picks up
+            // files the rule hasn't touched yet.
+            let last = RuleMatchMemory.shared.record(ruleId: condition.ruleId, path: path)?.lastMatchedAt ?? .distantPast
+            return matchDate(condition.operator, last, condition.value)
+
+        case .timesMatched:
+            let count = RuleMatchMemory.shared.record(ruleId: condition.ruleId, path: path)?.matchCount ?? 0
+            return matchNumber(condition.operator, Double(count), condition.value)
+
+        case .duplicate:
+            let scope = DuplicateScope(rawValue: condition.value) ?? .sameFolder
+            let isDuplicate = DuplicateFinder.isDuplicate(path: path, scope: scope)
+            switch condition.operator {
+            case .is: return isDuplicate
+            case .isNot: return !isDuplicate
+            default: return false
+            }
+
+        case .aiClassification:
+            return evaluateAIClassification(condition, path: path).matched
+        }
+    }
+
+    /// Asks the on-device model whether the file fits the condition's
+    /// description. Like `contents`, a file the model can't judge (no
+    /// readable text, Apple Intelligence unavailable) matches neither
+    /// `is` nor `is not`. `message` explains why, for the Dry Run.
+    static func evaluateAIClassification(_ condition: Condition, path: String) -> (matched: Bool, message: String?) {
+        if let reason = LocalAI.unavailableReason { return (false, reason) }
+        let description = condition.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !description.isEmpty else { return (false, "No description to compare with.") }
+        guard let text = ContentExtractor.extract(path: path).text, !text.isEmpty else {
+            return (false, "No readable text in this file.")
+        }
+        guard let fits = LocalAI.classify(text: text, fileName: (path as NSString).lastPathComponent, description: description) else {
+            return (false, "Apple Intelligence didn't give an answer.")
+        }
+        switch condition.operator {
+        case .is: return (fits, fits ? "Fits the description" : "Doesn't fit the description")
+        case .isNot: return (!fits, fits ? "Fits the description" : "Doesn't fit the description")
+        default: return (false, nil)
+        }
+    }
+
+    // MARK: - Named captures
+
+    /// Values of the named groups (`(?<year>\d{4})`) a matching regex
+    /// condition captured from the file, keyed by group name. Actions use
+    /// them as `{year}` tokens. Only `matches regex` conditions capture;
+    /// a condition whose regex doesn't match captures nothing.
+    static func namedCaptures(_ condition: Condition, path: String) -> [String: String] {
+        guard condition.operator == .matchesRegex else { return [:] }
+        let names = captureGroupNames(in: condition.value)
+        guard !names.isEmpty,
+              let re = try? NSRegularExpression(pattern: condition.value) else { return [:] }
+        for haystack in regexHaystacks(condition, path: path) {
+            guard let match = re.firstMatch(in: haystack, range: NSRange(haystack.startIndex..., in: haystack)) else { continue }
+            var captures: [String: String] = [:]
+            for name in names {
+                guard let range = Range(match.range(withName: name), in: haystack) else { continue }
+                captures[name] = String(haystack[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return captures
+        }
+        return [:]
+    }
+
+    /// Group names declared in a pattern, e.g. `["year", "owner"]` for
+    /// `IPTU (?<year>\d{4}) (?<owner>.+)`.
+    public static func captureGroupNames(in pattern: String) -> [String] {
+        guard pattern.contains("(?<"),
+              let re = try? NSRegularExpression(pattern: #"(?<!\\)\(\?<([A-Za-z][A-Za-z0-9]*)>"#) else { return [] }
+        let range = NSRange(pattern.startIndex..., in: pattern)
+        return re.matches(in: pattern, range: range).compactMap { match in
+            Range(match.range(at: 1), in: pattern).map { String(pattern[$0]) }
+        }
+    }
+
+    /// The same strings `evaluate` runs a regex condition against.
+    private static func regexHaystacks(_ condition: Condition, path: String) -> [String] {
+        let url = URL(fileURLWithPath: path)
+        switch condition.kind {
+        case .name: return [url.deletingPathExtension().lastPathComponent]
+        case .extension_: return [url.pathExtension.lowercased()]
+        case .filePath: return [path]
+        case .contents: return ContentExtractor.extract(path: path).text.map { [$0] } ?? []
+        case .finderComment: return FinderTags.readComment(path).map { [$0] } ?? []
+        case .tags: return FinderTags.read(path).map { tagName($0).lowercased() }
+        case .downloadedFromWebsite: return DownloadMetadata.websiteURLs(path)
+        case .rawWhereFromMetadata: return DownloadMetadata.whereFroms(path)
+        default: return []
         }
     }
 
@@ -279,7 +374,7 @@ public enum ConditionEvaluator {
     /// macOS "Date Added" (when the file was added to its current folder). Not
     /// exposed by `stat`/`FileManager`, so it is read via `getattrlist` with
     /// `ATTR_CMN_ADDEDTIME`. Returns `nil` if the volume does not track it.
-    private static func dateAdded(path: String) -> Date? {
+    static func dateAdded(path: String) -> Date? {
         var attrList = attrlist()
         attrList.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
         attrList.commonattr = attrgroup_t(ATTR_CMN_ADDEDTIME)

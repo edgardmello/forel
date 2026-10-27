@@ -57,6 +57,9 @@ public final class WatcherCoordinator: @unchecked Sendable {
     /// Files to run the rules on again, by the /Volumes name of the disk or
     /// share they wait for. Only touched on `processingQueue`; not persisted.
     var waitingForVolume: [String: Set<String>] = [:]
+    private let sweepLock = NSLock()
+    /// A re-check is queued or running. Guarded by `sweepLock`.
+    private var sweepPending = false
 
     private struct SettlingState {
         var fingerprint: String?
@@ -535,6 +538,63 @@ public final class WatcherCoordinator: @unchecked Sendable {
         RuleEngine.forEachEntry(root: root, maxDepth: remainingDepth) { entry in
             guard let depth = RuleEngine.pathDepth(root: folder.path, path: entry.path) else { return }
             process(entry.path, depth)
+        }
+    }
+
+    // MARK: - Periodic re-check
+
+    /// Re-checks every enabled folder for files that time-dependent rules
+    /// ("Date added is older than 30 days", "Date last matched…") now match
+    /// although nothing about the files changed — FSEvents never reports
+    /// those. A rule that already matched a file which hasn't changed since
+    /// is left alone, so a re-check never repeats an action. Runs on the
+    /// processing queue, after any events already waiting; a re-check
+    /// requested while one is still pending is dropped.
+    public func recheckTimeDependentRules() {
+        sweepLock.lock()
+        let alreadyPending = sweepPending
+        sweepPending = true
+        sweepLock.unlock()
+        guard !alreadyPending else { return }
+        processingQueue.async { [weak self] in
+            guard let self else { return }
+            self.performRecheck()
+            self.sweepLock.lock()
+            self.sweepPending = false
+            self.sweepLock.unlock()
+        }
+    }
+
+    /// Synchronous body of `recheckTimeDependentRules`, for tests.
+    func performRecheck() {
+        let folders = db.withLock { db -> [(WatchedFolder, [Rule])] in
+            ((try? db.listFolders()) ?? []).filter(\.enabled).map { folder in
+                (folder, (try? db.listRules(folderId: folder.id)) ?? [])
+            }
+        }
+        for (folder, rules) in folders {
+            let timeRuleIds = Set(rules.filter { $0.enabled && RuleEngine.isTimeDependent($0) }.map(\.id))
+            guard !timeRuleIds.isEmpty else { continue }
+            let scanned = rules.filter { timeRuleIds.contains($0.id) }
+
+            beginProcessing(root: folder.path)
+            RuleEngine.forEachEntry(root: folder.path, maxDepth: RuleEngine.maxRuleDepth(scanned)) { entry in
+                // Still arriving: the settle check will run every rule on it.
+                guard settling[entry.path] == nil, settlingAncestor(of: entry.path) == nil else { return }
+                let (matched, history) = RuleEngine.run(
+                    path: entry.path,
+                    depth: entry.depth,
+                    rules: rules,
+                    batchId: UUID().uuidString,
+                    root: folder.path,
+                    shouldConsider: { rule, path in
+                        timeRuleIds.contains(rule.id) && !RuleMatchMemory.shared.hasMatchedUnchanged(ruleId: rule.id, path: path)
+                    }
+                )
+                guard !matched.isEmpty || !history.isEmpty else { return }
+                record(matched: matched, history: history, path: entry.path, rules: rules)
+            }
+            endProcessing(root: folder.path)
         }
     }
 

@@ -124,7 +124,12 @@ public enum RuleEngine {
     /// status) with `previewFile` by going through `ActionExecutor.plan`
     /// first, then acting on it — so Dry Run, Run Now, and the watcher can
     /// never see a different outcome for the same file and rules.
-    public static func run(path: String, depth: Int, rules: [Rule], batchId: String, root: String? = nil) -> (matched: [String], history: [HistoryEntry]) {
+    ///
+    /// - Parameter shouldConsider: when given, rules it returns `false` for
+    ///   (for the file's current path) are passed over as if disabled — the
+    ///   periodic re-check uses it to look only at time-dependent rules that
+    ///   haven't already handled the file.
+    public static func run(path: String, depth: Int, rules: [Rule], batchId: String, root: String? = nil, shouldConsider: ((Rule, String) -> Bool)? = nil) -> (matched: [String], history: [HistoryEntry]) {
         guard !SystemFileFilter.isExcluded((path as NSString).lastPathComponent), !FileReadiness.isMarkedBusy(path) else {
             return ([], [])
         }
@@ -153,13 +158,22 @@ public enum RuleEngine {
             for ruleIndex in target.startRuleIndex..<rules.count {
                 let rule = rules[ruleIndex]
                 guard !blockedRuleIds.contains(rule.id) else { continue }
-                guard rule.enabled, ruleMatches(rule, path: currentPath, depth: currentDepth) else { continue }
+                guard rule.enabled else { continue }
+                if let shouldConsider, !shouldConsider(rule, currentPath) { continue }
+                guard ruleMatches(rule, path: currentPath, depth: currentDepth) else { continue }
                 if !checkedBusyContents {
                     checkedBusyContents = true
                     if FileReadiness.containsBusyItem(path) { return ([], []) }
                 }
 
-                let result = runActions(rule, path: currentPath, batchId: batchId, root: root)
+                // Taken before the actions run: a move to another disk
+                // gives the file a new identity.
+                let matchKey = RuleMatchMemory.fileKey(currentPath)
+                let captures = namedCaptures(rule, path: currentPath)
+                let result = TokenExpander.$captures.withValue(captures) {
+                    runActions(rule, path: currentPath, batchId: batchId, root: root)
+                }
+                RuleMatchMemory.shared.recordMatch(ruleId: rule.id, fileKey: matchKey, finalPath: result.finalPath)
                 history.append(contentsOf: result.history)
                 matched.append(rule.name)
 
@@ -279,7 +293,10 @@ public enum RuleEngine {
                     if FileReadiness.containsBusyItem(path) { return nil }
                 }
 
-                let result = previewActions(rule, path: currentPath, root: root)
+                let captures = namedCaptures(rule, path: currentPath)
+                let result = TokenExpander.$captures.withValue(captures) {
+                    previewActions(rule, path: currentPath, root: root)
+                }
                 matchedRules.append(
                     RulePreview(
                         ruleId: rule.id,
@@ -332,8 +349,28 @@ public enum RuleEngine {
         return FilePreview(path: path, name: (path as NSString).lastPathComponent, rules: matchedRules)
     }
 
+    /// Named regex groups captured by the rule's conditions, merged in
+    /// condition order (a later condition's group wins a name clash).
+    static func namedCaptures(_ rule: Rule, path: String) -> [String: String] {
+        var captures: [String: String] = [:]
+        for condition in rule.conditions {
+            captures.merge(ConditionEvaluator.namedCaptures(condition, path: path)) { _, new in new }
+        }
+        return captures
+    }
+
     private static func conditionPreviews(_ rule: Rule, path: String) -> [ConditionPreview] {
         rule.conditions.map { condition in
+            if condition.kind == .aiClassification {
+                let result = ConditionEvaluator.evaluateAIClassification(condition, path: path)
+                return ConditionPreview(
+                    kind: condition.kind,
+                    operator_: condition.operator,
+                    value: condition.value,
+                    matched: result.matched,
+                    detail: result.message
+                )
+            }
             // `contents` runs the extraction pipeline once and reports which
             // strategy was used, so the Dry Run can show what was actually read.
             if condition.kind == .contents {
@@ -409,9 +446,16 @@ public enum RuleEngine {
 
     /// Relative cost of evaluating a condition, used only to order evaluation so
     /// the cheap checks can short-circuit before the expensive ones. `contents`
-    /// can read/parse the whole file (and run OCR), so it is always evaluated last.
+    /// can read/parse the whole file (and run OCR) and `duplicate` may hash
+    /// several files, so they come after the cheap checks; asking the
+    /// on-device model is slowest of all and always goes last.
     private static func evaluationCost(_ kind: ConditionKind) -> Int {
-        kind == .contents ? 1 : 0
+        switch kind {
+        case .aiClassification: return 3
+        case .contents: return 2
+        case .duplicate: return 1
+        default: return 0
+        }
     }
 
     private static func ruleInScope(_ rule: Rule, depth: Int) -> Bool {
@@ -463,6 +507,17 @@ public enum RuleEngine {
             }
             if let limit = maxDepth, depth >= limit { continue }
             walkEntriesInner(root: childPath, maxDepth: maxDepth, depth: depth + 1, visit: visit)
+        }
+    }
+
+    /// Whether time alone can change the rule's outcome for an untouched
+    /// file: a relative date ("is older than 30 days") or the rule's own
+    /// match history. Only these rules are worth re-checking on a schedule;
+    /// everything else gives the same answer until the file changes, which
+    /// the watcher already sees.
+    public static func isTimeDependent(_ rule: Rule) -> Bool {
+        rule.conditions.contains { condition in
+            condition.operator.usesRelativeDateValue || condition.kind == .dateLastMatched
         }
     }
 
