@@ -6,6 +6,7 @@ All notable changes to Forel are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- Text recognition of images and scanned PDFs now prefers Portuguese with English fallback, so accents like "matrícula" survive matching and captures on Brazilian documents.
 - Rename captures support a `|padN` (2–9) transform that zero-pads purely numeric captures, so page numbers sort correctly (`fls02` before `fls10`).
 - Finder comments now accept the same tokens as rename patterns, so a comment can carry values captured from the document itself.
 - The rename editor explains the `{content:…}` transforms and the Finder comment field points out it accepts the same tokens.
