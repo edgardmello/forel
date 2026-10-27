@@ -152,6 +152,22 @@ import Foundation
         #expect(FinderTags.readComment(source) == "Reviewed")
     }
 
+    @Test func addCommentExpandsTokensFromTheFilesText() throws {
+        let dir = TempDir()
+        let file = dir.file("rgi.txt", contents: "Matrícula 123.456\n7º Registro de Imóveis")
+
+        let action = makeAction(.addComment, .object([
+            ActionParam.comment: .string("Matrícula {content:Matr[íi]cula\\s*([\\d.]+)} - {name}")
+        ]))
+
+        let plan = try ActionExecutor.plan(action, path: file)
+        #expect(plan.status == .wouldRun)
+        #expect(plan.description == "Add Finder comment: Matrícula 123.456 - rgi")
+
+        _ = try ActionExecutor.execute(action, path: file)
+        #expect(FinderTags.readComment(file) == "Matrícula 123.456 - rgi")
+    }
+
     @Test func FinderToggleActionsCanBeReversedByRunningAgain() throws {
         let dir = TempDir()
         let file = dir.file("document.txt", contents: "hello")

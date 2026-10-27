@@ -15,11 +15,14 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import AppKit
+import SwiftUI
 
-/// Closing the main window hides it instead of quitting; Forel keeps running
-/// in the background.
+/// Closing the main window doesn't quit; Forel keeps running in the
+/// background and reopens the window from the menu bar, Finder or the Dock.
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    static let mainWindowID = "main"
+
     /// Set by `ForelMacApp` as soon as the model and updater exist, so the
     /// menu bar icon can be created at launch instead of waiting for the main
     /// window's `onAppear`: macOS doesn't open that window when it starts
@@ -30,10 +33,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var model: AppModel?
     private var updater: UpdaterManager?
     /// The window hosting `ContentView`, reported by `ForelMacApp` through
-    /// `mainWindowDidAttach`. Tracked explicitly rather than looked up in
-    /// `NSApp.windows`, which also holds the menu bar item's own window and
-    /// the Settings window, in no useful order.
+    /// `mainWindowDidAttach` and cleared when it closes. Tracked explicitly
+    /// rather than looked up in `NSApp.windows`, which also holds the menu
+    /// bar item's own window and the Settings window, in no useful order.
     private weak var mainWindow: NSWindow?
+    private var mainWindowCloseObserver: NSObjectProtocol?
+    /// Recreates the main window after it was closed. Set once the window
+    /// has appeared for the first time.
+    var openWindow: OpenWindowAction?
     /// The main window was asked for before it existed (Forel started as a
     /// login item); bring it forward as soon as SwiftUI has created it.
     private var activatesMainWindowWhenAttached = false
@@ -55,7 +62,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// when the window is first created by reopening a login-item launch.
     func mainWindowDidAttach(_ window: NSWindow) {
         mainWindow = window
-        window.delegate = self
+        if let mainWindowCloseObserver {
+            NotificationCenter.default.removeObserver(mainWindowCloseObserver)
+        }
+        mainWindowCloseObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.mainWindow = nil }
+        }
         window.title = "Forel"
         window.titleVisibility = .hidden
         if activatesMainWindowWhenAttached {
@@ -120,6 +136,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         model?.applyDockIconPreference()
         setUpStatusBar()
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: SingleInstance.showMainWindowNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.openMainWindow() }
+        }
     }
 
     /// Opening Forel straight from the mounted installer disk image (before
@@ -146,14 +170,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Finder and Spotlight send a reopen event when Forel is already
         // running — even when only Settings is visible. Always surface the
         // actual main window.
-        if openMainWindow() {
-            // Shown above; returning false keeps SwiftUI from opening a
-            // second main window next to it.
+        if showMainWindow() {
             return false
         }
         // No main window yet (login-item launch): returning true lets SwiftUI
         // create the window it skipped at launch; `mainWindowDidAttach` then
         // brings it forward.
+        activatesMainWindowWhenAttached = true
         return true
     }
 
@@ -166,25 +189,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
-    @discardableResult
-    private func openMainWindow() -> Bool {
-        guard let targetWindow = mainWindow ?? NSApp.windows.first(where: { !($0 is NSPanel) }) else {
-            // Started as a login item, Forel has no main window yet; reopening
-            // the app is what makes SwiftUI create it.
-            activatesMainWindowWhenAttached = true
-            NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: NSWorkspace.OpenConfiguration())
-            return false
+    private func openMainWindow() {
+        guard !showMainWindow() else { return }
+        // Started as a login item, Forel has never shown its main window;
+        // reopening the app is what makes SwiftUI create it.
+        activatesMainWindowWhenAttached = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    /// Brings the main window forward, recreating it if it was closed.
+    /// Returns `false` only when it has never been created.
+    private func showMainWindow() -> Bool {
+        if let mainWindow {
+            WindowActivation.activateSoon(mainWindow, showsDockIcon: model?.showDockIcon != false)
+            return true
         }
-        WindowActivation.activateSoon(targetWindow, showsDockIcon: model?.showDockIcon != false)
+        guard let openWindow else { return false }
+        activatesMainWindowWhenAttached = true
+        openWindow(id: Self.mainWindowID)
         return true
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
-    }
-
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        sender.orderOut(nil)
-        return false
     }
 }

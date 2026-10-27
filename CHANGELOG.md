@@ -7,6 +7,9 @@ All notable changes to Forel are documented here. Format loosely follows
 
 ### Added
 - Text recognition of images and scanned PDFs now prefers Portuguese with English fallback, so accents like "matrícula" survive matching and captures on Brazilian documents.
+- Rename captures support a `|padN` (2–9) transform that zero-pads purely numeric captures, so page numbers sort correctly (`fls02` before `fls10`).
+- Finder comments now accept the same tokens as rename patterns, so a comment can carry values captured from the document itself.
+- The rename editor explains the `{content:…}` transforms and the Finder comment field points out it accepts the same tokens.
 - Rename patterns (and folder destinations) can now pull values out of the file's own contents with `{content:REGEX}` — e.g. `{content:IPTU (\d{4})}-iptu({content:INSCRIÇÃO:\s*([\d.]+-\d)})_{content:^([A-ZÀ-Ú ]+)$|title}.{extension}` renames a tax PDF to `2026-iptu(2.038.592-8)_Maria Tereza Alcure Dias Leite.pdf`. A trailing `|title`/`|upper`/`|lower` transforms the captured text, and a token that finds nothing fails the action with a clear message instead of producing a half-empty name.
 - Rules can now be tested while being edited: a Test button in the editor dry-runs the current draft against the watched folder, showing matched files, how each condition evaluated, and what each action would do — no save needed.
 - When a tested rule matches nothing, the editor now explains why: sample files are listed with each condition's pass/fail result.
@@ -32,6 +35,9 @@ All notable changes to Forel are documented here. Format loosely follows
 - Settings → About now shows the version, build, copyright, and repository link, matching the About Forel window.
 
 ### Fixed
+- Reopening Forel from Finder, the Dock or the menu bar after closing its window now brings the window back instead of doing nothing.
+- Forel now runs only once: launching it again while it's already running brings the running copy's window forward instead of starting a second copy that would run every rule twice.
+- File > New Forel Window (⌘N) is gone; Forel now has a single main window.
 - Renaming no longer fails when a file with the target name already exists: re-deliveries of the same document — whether byte-identical or re-printed with identical text — converge on the one renamed copy (the duplicate goes to the Trash, undoable), and genuinely different files get the usual " (1)" suffix instead of being left behind with the old name.
 - Contents conditions now match regardless of letter case, so a rule searching for "Fernanda Freitas" also finds "FERNANDA FREITAS" in a document. Regex conditions keep their own case rules.
 - Forel now re-registers itself to start at login when macOS loses the registration (a system update or cleaner app can remove it), and Settings warns with a fix instead of showing the toggle as on when Forel isn't actually set to launch.

@@ -96,11 +96,18 @@ final class AppModel: ObservableObject {
     private var watcherHistoryRevisionTask: Task<Void, Never>?
         private let hazelAppURL: URL?
 
-    init() throws {
+    /// Forel's Application Support folder, migrated from the legacy location
+    /// and created if needed. Separate from `init` so the single-instance
+    /// lock can be taken there before the database is opened.
+    static func prepareAppSupportDirectory() throws -> URL {
         let appSupportRoot = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let appSupport = appSupportRoot.appendingPathComponent("com.lab421.forel", isDirectory: true)
-        Self.migrateLegacyAppSupportDirectoryIfNeeded(root: appSupportRoot, newDirectory: appSupport)
+        migrateLegacyAppSupportDirectoryIfNeeded(root: appSupportRoot, newDirectory: appSupport)
         try FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        return appSupport
+    }
+
+    init(appSupport: URL) throws {
         let dbPath = appSupport.appendingPathComponent("forel.db").path
 
         let db = try Database(path: dbPath)
