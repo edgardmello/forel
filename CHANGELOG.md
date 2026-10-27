@@ -6,6 +6,7 @@ All notable changes to Forel are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- Running `./build.sh` from a terminal without a command, or `package` without a version, now walks you through the command, architecture, version (suggesting the next patch, minor, or major release), and signing, then shows the equivalent one-line command; scripts and CI are unaffected. `./build.sh --help` lists every option.
 - The rule list gained a filter field, Collapse All, and a Select mode for enabling, disabling, or deleting several rules at once.
 - Rule context menus now offer Duplicate, Move to another folder, and Copy to another folder; copies start disabled and moves keep each rule's history attached.
 - The rule editor's test results can now be filtered to matched files only, hiding the sample list of non-matches when you just want the count.
