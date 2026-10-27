@@ -7,7 +7,9 @@ Usage:
   ./build.sh [command] [arch] [version] [--sign] [--notarize]
 
 Commands:
-  dev       Build in debug mode and run ForelApp locally
+  dev       Build in debug mode and run ForelApp locally (signs with your
+            code-signing identity so permission prompts persist across
+            rebuilds; override with CODESIGN_IDENTITY)
   build     Build the Swift package in release mode
   test      Run the Swift test suite
   package   Build and package a Forel.app + DMG
@@ -261,10 +263,11 @@ case "$command" in
   dev)
     cd "$repo_root"
     # Build and run from inside a debug .app bundle rather than the bare
-    # `swift run` binary. macOS attributes TCC checks (Photos, Automation) to
-    # the bundle identity declared in Info.plist; an unbundled binary has none,
-    # so those checks get misattributed to whatever launched it (e.g. the
-    # terminal you're using) instead of Forel, making them unreliable to test.
+    # `swift run` binary. macOS attributes TCC checks (Photos, Automation,
+    # Removable Volumes) to the bundle's code-signing identity; an unbundled
+    # binary has none, so those checks get misattributed to whatever launched
+    # it (e.g. the terminal you're using) instead of Forel, making them
+    # unreliable to test.
     swift build
 
     build_products_dir="$(swift build --show-bin-path)"
@@ -274,8 +277,41 @@ case "$command" in
 
     write_info_plist "$contents_dir" "0.0.0-dev"
 
-    # Ad-hoc sign so TCC has a stable bundle identity to attach grants to.
-    codesign --force --deep --sign - "$dev_bundle" >/dev/null 2>&1
+    # Sign with a real identity when one is available, so TCC grants
+    # (removable volumes, Photos, automation) survive rebuilds. An ad-hoc
+    # signature changes with every rebuild, and macOS treats each rebuild
+    # as a new program — re-prompting for permissions the user already gave.
+    signing_identity="${CODESIGN_IDENTITY:-}"
+    if [[ -z "$signing_identity" ]]; then
+      # bash 3.2 (stock macOS) has no mapfile; parse into a newline list.
+      identity_list="$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/^ *[0-9]+\) .+"/ {print $2}')"
+      identity_count="$(printf '%s\n' "$identity_list" | grep -c . || true)"
+      if [[ "$identity_count" -eq 1 ]]; then
+        signing_identity="$identity_list"
+      elif [[ "$identity_count" -gt 1 ]]; then
+        echo "Multiple code-signing identities found; set CODESIGN_IDENTITY to pick one:" >&2
+        printf '%s\n' "$identity_list" >&2
+      fi
+    fi
+
+    if [[ -n "$signing_identity" ]]; then
+      codesign --force --deep --sign "$signing_identity" "$dev_bundle" >/dev/null 2>&1 || {
+        echo "Signing with '$signing_identity' failed — falling back to ad-hoc." >&2
+        codesign --force --deep --sign - "$dev_bundle" >/dev/null 2>&1
+        signing_identity=""
+      }
+    else
+      codesign --force --deep --sign - "$dev_bundle" >/dev/null 2>&1
+    fi
+
+    if [[ -n "$signing_identity" ]]; then
+      echo "Signed dev bundle with: $signing_identity"
+      echo "Permission prompts should now appear only once per permission."
+    else
+      echo "Ad-hoc signed: macOS will re-ask for folder/volume permissions after every rebuild." >&2
+      echo "For one-time-only prompts, sign with a stable certificate (set CODESIGN_IDENTITY)." >&2
+    fi
+
     # Exec the binary inside the bundle (not `open`) so stdout/stderr stay
     # attached to this terminal while macOS still reads the adjacent
     # Info.plist for the bundle identity TCC checks need.
