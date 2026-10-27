@@ -6,6 +6,9 @@ All notable changes to Forel are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- Rename captures support a `|padN` (2–9) transform that zero-pads purely numeric captures, so page numbers sort correctly (`fls02` before `fls10`).
+- Finder comments now accept the same tokens as rename patterns, so a comment can carry values captured from the document itself.
+- The rename editor explains the `{content:…}` transforms and the Finder comment field points out it accepts the same tokens.
 - Rename patterns (and folder destinations) can now pull values out of the file's own contents with `{content:REGEX}` — e.g. `{content:IPTU (\d{4})}-iptu({content:INSCRIÇÃO:\s*([\d.]+-\d)})_{content:^([A-ZÀ-Ú ]+)$|title}.{extension}` renames a tax PDF to `2026-iptu(2.038.592-8)_Maria Tereza Alcure Dias Leite.pdf`. A trailing `|title`/`|upper`/`|lower` transforms the captured text, and a token that finds nothing fails the action with a clear message instead of producing a half-empty name.
 - Rules can now be tested while being edited: a Test button in the editor dry-runs the current draft against the watched folder, showing matched files, how each condition evaluated, and what each action would do — no save needed.
 - When a tested rule matches nothing, the editor now explains why: sample files are listed with each condition's pass/fail result.

@@ -1269,7 +1269,12 @@ private struct ActionRow: View {
         case .setColorLabel:
             ColorLabelPicker(selection: paramBinding(ActionParam.color), allowNone: true)
         case .addComment:
-            GlassField(placeholder: "Finder comment", text: paramBinding(ActionParam.comment))
+            VStack(alignment: .leading, spacing: 6) {
+                GlassField(placeholder: "Finder comment", text: paramBinding(ActionParam.comment))
+                Text("Supports the same tokens as rename patterns — {name} and {content:REGEX} captures from the document's text")
+                    .font(.system(size: 10))
+                    .foregroundStyle(ForelTheme.secondaryText)
+            }
         case .toggleExtension:
             actionDescription("Shows or hides the filename extension")
         case .toggleLock:
@@ -2059,6 +2064,10 @@ private struct RenamePatternEditor: View {
                     Spacer(minLength: 0)
                 }
             }
+
+            Text("Append to {content:…} captures: |title, |upper, |lower, or |pad2–|pad9 to zero-pad page numbers")
+                .font(.system(size: 10))
+                .foregroundStyle(ForelTheme.secondaryText)
 
             if !preview.isEmpty {
                 Text(preview)

@@ -611,9 +611,18 @@ public enum ActionExecutor {
     }
 
     private static func addComment(_ action: Action, path: String) throws -> Applied {
-        let comment = try stringParam(action, ActionParam.comment, "AddComment")
+        let comment = try expandedComment(action, path: path)
         try FinderTags.writeComment(path, comment)
         return Applied(newPath: path, undo: .none)
+    }
+
+    /// Finder comments accept the same tokens as the Rename pattern —
+    /// `{name}`, dates, and `{content:REGEX}` captures from the document's
+    /// text. Shared by execute and plan so the Dry Run shows the real
+    /// comment the rule would write.
+    private static func expandedComment(_ action: Action, path: String) throws -> String {
+        let raw = try stringParam(action, ActionParam.comment, "AddComment")
+        return try TokenExpander.expand(raw, path: path)
     }
 
     private static func toggleExtension(path: String) throws -> Applied {
@@ -1624,8 +1633,12 @@ public enum ActionExecutor {
                 isTerminal: false
             )
         case .addComment:
-            let comment = action.params[ActionParam.comment]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return ActionPlan(kind: action.kind, description: "Add Finder comment", sourcePath: path, targetPath: nil, status: comment.isEmpty ? .wouldSkip : .wouldRun, finalPath: path, copiedPath: nil, isTerminal: false)
+            let raw = action.params[ActionParam.comment]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !raw.isEmpty else {
+                return ActionPlan(kind: action.kind, description: "Add Finder comment", sourcePath: path, targetPath: nil, status: .wouldSkip, finalPath: path, copiedPath: nil, isTerminal: false)
+            }
+            let comment = try expandedComment(action, path: path)
+            return ActionPlan(kind: action.kind, description: "Add Finder comment: \(comment)", sourcePath: path, targetPath: nil, status: comment.isEmpty ? .wouldSkip : .wouldRun, finalPath: path, copiedPath: nil, isTerminal: false)
         case .toggleExtension:
             return ActionPlan(kind: action.kind, description: "Toggle extension visibility", sourcePath: path, targetPath: nil, status: .wouldRun, finalPath: path, copiedPath: nil, isTerminal: false)
         case .toggleLock:
