@@ -114,12 +114,6 @@ struct SettingsView: View {
                 }
                 Divider().overlay(ForelTheme.divider).padding(.leading, 14)
                 ToggleRow(
-                    title: "Show Dock icon",
-                    subtitle: "Keep Forel visible in the Dock while it runs",
-                    isOn: dockIconBinding
-                )
-                Divider().overlay(ForelTheme.divider).padding(.leading, 14)
-                ToggleRow(
                     title: "Show menu bar icon",
                     subtitle: "Open Forel from Finder or Spotlight when it is hidden",
                     isOn: menuBarIconBinding
@@ -256,10 +250,6 @@ struct SettingsView: View {
         return LoginItem.requiresApproval
             ? "macOS is waiting for your approval. Open Login Items & Extensions in System Settings and allow Forel."
             : "Forel is set to start at login, but macOS has no active registration — a system update or cleaner app may have removed it. Turn this off and back on to fix it."
-    }
-
-    private var dockIconBinding: Binding<Bool> {
-        Binding(get: { model.showDockIcon }, set: { model.setShowDockIcon($0) })
     }
 
     private var menuBarIconBinding: Binding<Bool> {

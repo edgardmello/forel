@@ -20,6 +20,8 @@ import ForelCore
 
 /// Closing the main window doesn't quit; Forel keeps running in the
 /// background and reopens the window from the menu bar, Finder or the Dock.
+/// While a Forel window is open, Forel is in the Dock; closing the last one
+/// leaves only the menu bar icon (see `WindowActivation`).
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static let mainWindowID = "main"
@@ -45,6 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The main window was asked for before it existed (Forel started as a
     /// login item); bring it forward as soon as SwiftUI has created it.
     private var activatesMainWindowWhenAttached = false
+    /// macOS started Forel at login, or to open a `forel://` link: stay in
+    /// the menu bar instead of putting the main window in front of the user.
+    private var launchedInBackground = false
+    private var windowCloseObserver: NSObjectProtocol?
 
     /// `@NSApplicationDelegateAdaptor` requires a zero-argument initializer;
     /// the app's model/updater are handed in afterward once SwiftUI has
@@ -53,7 +59,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func configure(model: AppModel, updater: UpdaterManager) {
         self.model = model
         self.updater = updater
-        model.applyDockIconPreference()
         setUpStatusBar()
         showMainWindowOnFirstLaunch()
         repairLoginItemRegistrationIfNeeded()
@@ -75,10 +80,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         window.title = "Forel"
         window.titleVisibility = .hidden
-        if activatesMainWindowWhenAttached {
-            activatesMainWindowWhenAttached = false
-            WindowActivation.activateSoon(window, showsDockIcon: model?.showDockIcon != false)
-        }
+        // Bring the window to the front (and Forel into the Dock) whenever
+        // it's shown: SwiftUI orders it in at launch, but an LSUIElement app
+        // isn't activated, so it otherwise opens behind other apps' windows.
+        // A window SwiftUI keeps hidden is only shown when it was asked for.
+        let wasRequested = activatesMainWindowWhenAttached
+        activatesMainWindowWhenAttached = false
+        WindowActivation.activateSoon(window, onlyIfVisible: !wasRequested)
     }
 
     /// A brand-new install otherwise only shows up as a menu bar icon
@@ -114,6 +122,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LoginItem.setEnabled(true)
     }
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        launchedInBackground = !Self.isInteractiveLaunch(NSAppleEventManager.shared().currentAppleEvent)
+    }
+
+    /// A launch the user started themselves — from Finder, the Dock,
+    /// Spotlight or `open` — arrives as a plain "open application" event.
+    /// Login items carry the "launched as login item" flag on it, and
+    /// `forel://` links arrive as a "get URL" event instead.
+    private static func isInteractiveLaunch(_ event: NSAppleEventDescriptor?) -> Bool {
+        guard let event else { return true }
+        guard event.eventClass == AEEventClass(kCoreEventClass),
+              event.eventID == AEEventID(kAEOpenApplication) else { return false }
+        let launchKind = event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue
+        return launchKind != OSType(keyAELaunchedAsLogInItem)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         if warnAndQuitIfRunningFromDiskImage() {
             return
@@ -135,8 +159,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if mainWindow == nil, let window = NSApp.windows.first {
             mainWindowDidAttach(window)
         }
-        model?.applyDockIconPreference()
         setUpStatusBar()
+
+        windowCloseObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: nil,
+            queue: .main
+        ) { notification in
+            let closing = notification.object as? NSWindow
+            MainActor.assumeIsolated {
+                WindowActivation.leaveDockIfNoWindowsRemain(excluding: closing)
+            }
+        }
+
+        // Opened by the user: make sure the main window is up front even if
+        // SwiftUI didn't restore it (it was closed when Forel last quit).
+        // Started in the background: stay out of the Dock until a window opens.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            if self.launchedInBackground {
+                WindowActivation.leaveDockIfNoWindowsRemain()
+            } else if self.mainWindow?.isVisible != true {
+                self.openMainWindow()
+            }
+        }
 
         DistributedNotificationCenter.default().addObserver(
             forName: SingleInstance.showMainWindowNotification,
@@ -202,7 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Returns `false` only when it has never been created.
     private func showMainWindow() -> Bool {
         if let mainWindow {
-            WindowActivation.activateSoon(mainWindow, showsDockIcon: model?.showDockIcon != false)
+            WindowActivation.activateSoon(mainWindow)
             return true
         }
         guard let openWindow else { return false }
