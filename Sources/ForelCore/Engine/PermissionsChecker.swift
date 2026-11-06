@@ -83,6 +83,37 @@ public enum PermissionsChecker {
         #endif
     }
 
+    // MARK: - Full Disk Access
+
+    /// Files only readable by apps with Full Disk Access. Reading one is the
+    /// standard, prompt-free way to learn the status; there is no public API.
+    public static var fullDiskAccessProbePaths: [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return [
+            "\(home)/Library/Application Support/com.apple.TCC/TCC.db",
+            "\(home)/Library/Safari/Bookmarks.plist",
+            "/Library/Application Support/com.apple.TCC/TCC.db",
+        ]
+    }
+
+    /// Whether Forel has Full Disk Access. With it, macOS never asks for
+    /// per-folder access (Desktop, Documents, Downloads, external and network
+    /// volumes) again — as long as the app keeps the same code signature.
+    /// Never prompts. Probes that don't exist on this Mac are ignored; if
+    /// none exists the status is `.unknown`.
+    public static func fullDiskAccessStatus(probePaths: [String] = fullDiskAccessProbePaths) -> PermissionStatus {
+        let fm = FileManager.default
+        var sawProtectedFile = false
+        for path in probePaths where fm.fileExists(atPath: path) {
+            sawProtectedFile = true
+            if let handle = FileHandle(forReadingAtPath: path) {
+                try? handle.close()
+                return .granted
+            }
+        }
+        return sawProtectedFile ? .denied : .unknown
+    }
+
     // MARK: - Automation (Music / TV)
 
     /// Whether `app` ("Music" or "TV") already has a running process —

@@ -18,11 +18,12 @@ import SwiftUI
 import AppKit
 import ForelCore
 
-/// Centralizes every system permission Forel depends on — Photos and
-/// Music/TV automation — in one place, so the user can see at a glance what's
+/// Centralizes every system permission Forel depends on — Full Disk Access,
+/// Photos and Music/TV automation — in one place, so the user can see at a glance what's
 /// granted and fix what isn't, instead of discovering a missing permission
 /// only when a rule silently fails.
 struct PermissionsSection: View {
+    @State private var fullDiskStatus: PermissionStatus = .unknown
     @State private var photosStatus: PermissionStatus = .unknown
     @State private var musicStatus: PermissionStatus = .unknown
     @State private var tvStatus: PermissionStatus = .unknown
@@ -32,6 +33,10 @@ struct PermissionsSection: View {
     var body: some View {
         SectionLabel(title: "Permissions")
         GlassCard {
+            FullDiskAccessRow(status: fullDiskStatus, onCheck: {
+                fullDiskStatus = PermissionsChecker.fullDiskAccessStatus()
+            })
+            Divider().overlay(ForelTheme.divider).padding(.leading, 14)
             PhotosPermissionRow(status: photosStatus, onRequest: {
                 photosStatus = PermissionsChecker.requestPhotosAccess()
             })
@@ -51,6 +56,7 @@ struct PermissionsSection: View {
             )
         }
         .onAppear {
+            fullDiskStatus = PermissionsChecker.fullDiskAccessStatus()
             photosStatus = PermissionsChecker.photosAccessStatus()
             // `isAppRunning` talks to System Events over AppleScript, which
             // can take a noticeable moment (especially the first time it's
@@ -83,6 +89,46 @@ struct PermissionsSection: View {
                     isCheckingTV = false
                 }
             }
+        }
+    }
+}
+
+/// Full Disk Access is the one grant that stops macOS from asking for each
+/// watched folder separately (Desktop, Documents, Downloads, external and
+/// network drives) after a restart or update.
+private struct FullDiskAccessRow: View {
+    let status: PermissionStatus
+    let onCheck: () -> Void
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Full Disk Access").font(.system(size: 13, weight: .semibold)).foregroundStyle(ForelTheme.primaryText)
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(ForelTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            Spacer()
+            PermissionStatusBadge(status: status)
+            if status != .granted {
+                Button("Open Settings") { SystemSettings.openPrivacyPane(.fullDiskAccess) }
+                    .buttonStyle(SecondaryButtonStyle())
+                Button("Check Again", action: onCheck)
+                    .buttonStyle(SecondaryButtonStyle())
+            }
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+    }
+
+    private var detail: String {
+        switch status {
+        case .granted:
+            return "macOS won't ask again for each watched folder. If you install a build signed differently, turn Forel off and on again in this list."
+        default:
+            return "Recommended. Without it, macOS asks separately for Desktop, Documents, Downloads and each external or network drive, and can ask again after a restart or update. Turn on Forel in the list, then click Check Again."
         }
     }
 }
@@ -195,6 +241,7 @@ enum SystemSettings {
     enum PrivacyPane: String {
         case photos = "Privacy_Photos"
         case automation = "Privacy_Automation"
+        case fullDiskAccess = "Privacy_AllFiles"
     }
 
     static func openPrivacyPane(_ pane: PrivacyPane) {

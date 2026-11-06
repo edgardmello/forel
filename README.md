@@ -125,6 +125,22 @@ Running the bare `swift run` binary instead makes macOS attribute permission
 prompts — removable volumes, Photos, automation — to the terminal or re-ask
 after every rebuild, so access to folders on external drives never sticks.
 
+#### Stop the repeated folder-permission prompts
+
+macOS remembers privacy grants per code signature. A build without a
+certificate gets a new signature every time, so macOS asks for the same
+folders again after each rebuild or reinstall. Run this once:
+
+```bash
+./build.sh signing-setup
+```
+
+It creates a free, self-signed "Forel Local Signing" certificate in your login
+keychain; `dev` and `package` then sign with it automatically. Install the new
+build, then turn on Forel in **System Settings → Privacy & Security → Full Disk
+Access** (Settings → Permissions in Forel links there). From then on macOS
+doesn't ask for Desktop, Documents, Downloads or external drives again.
+
 To package a DMG, run `./build.sh` with no arguments: it asks what to build,
 for which architecture, and which version (suggesting the next one), then
 prints the equivalent one-line command. `./build.sh --help` lists all options.
