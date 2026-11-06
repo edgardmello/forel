@@ -5,6 +5,12 @@ All notable changes to Forel are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- Forel now appears in the Dock whenever one of its windows is open and leaves the Dock, keeping only the menu bar icon, when you close the window. Reopening it from the menu bar, Finder or Spotlight brings the Dock icon back. The "Show Dock icon" setting was removed.
+
+### Fixed
+- Opening Forel now brings its window to the front instead of leaving it behind other apps' windows, including when it was closed the last time Forel quit.
+
 ### Added
 - Rules that depend on time ("is older than", "is within the last", "Date last matched") are now re-checked on a schedule (every 30 minutes by default, adjustable in Settings → Automation) and when the Mac wakes, so a file that turns 30 days old is handled without anything else touching it. A rule never repeats on a file it already handled unless the file changed.
 - New "Date last matched" and "Times matched" conditions remember, per rule, when and how often it matched each file, even after a rename — "Times matched is 0" runs a rule only the first time.

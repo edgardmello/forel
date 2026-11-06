@@ -17,10 +17,13 @@
 import AppKit
 import SwiftUI
 
+/// Forel lives in the Dock only while one of its windows is open: showing a
+/// window switches it to a regular app (Dock icon, menu bar, Cmd-Tab), and
+/// closing the last one drops it back to a menu-bar-only accessory app.
 @MainActor
 enum WindowActivation {
-    static func activate(_ window: NSWindow?, showsDockIcon: Bool = true) {
-        NSApp.setActivationPolicy(showsDockIcon ? .regular : .accessory)
+    static func activate(_ window: NSWindow?) {
+        NSApp.setActivationPolicy(.regular)
         window?.makeKeyAndOrderFront(nil)
         window?.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
@@ -34,13 +37,44 @@ enum WindowActivation {
     /// even though the window itself comes to the front. Deferring a tick,
     /// then again shortly after, avoids that race — use this instead of
     /// calling `activate` directly from a UI action.
-    static func activateSoon(_ window: NSWindow?, showsDockIcon: Bool = true) {
-        DispatchQueue.main.async {
-            activate(window, showsDockIcon: showsDockIcon)
+    ///
+    /// With `onlyIfVisible`, a window that isn't on screen by then is left
+    /// alone rather than shown — for windows SwiftUI creates but may keep
+    /// hidden, such as at a login-item launch.
+    static func activateSoon(_ window: NSWindow?, onlyIfVisible: Bool = false) {
+        let activateIfWanted = { [weak window] in
+            if onlyIfVisible, window?.isVisible != true { return }
+            activate(window)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            activate(window, showsDockIcon: showsDockIcon)
+        DispatchQueue.main.async(execute: activateIfWanted)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: activateIfWanted)
+    }
+
+    /// Windows that keep Forel in the Dock: titled, non-panel windows that
+    /// are on screen or minimized. Excludes the menu bar item's own window
+    /// and its popover, which aren't titled.
+    static func hasUserFacingWindow(excluding excluded: NSWindow? = nil) -> Bool {
+        NSApp.windows.contains { window in
+            window !== excluded
+                && !(window is NSPanel)
+                && window.styleMask.contains(.titled)
+                && (window.isVisible || window.isMiniaturized)
         }
+    }
+
+    /// Puts Forel back in the Dock when one of its windows is shown by a
+    /// path that didn't go through `activate` (e.g. SwiftUI reopening the
+    /// main window itself).
+    static func enterDockIfNeeded(for window: NSWindow?) {
+        guard let window, NSApp.activationPolicy() != .regular,
+              !(window is NSPanel), window.styleMask.contains(.titled) else { return }
+        activateSoon(window)
+    }
+
+    /// Leaves the Dock once no Forel window is left open.
+    static func leaveDockIfNoWindowsRemain(excluding excluded: NSWindow? = nil) {
+        guard !hasUserFacingWindow(excluding: excluded) else { return }
+        NSApp.setActivationPolicy(.accessory)
     }
 
     private static var activationOptions: NSApplication.ActivationOptions {
@@ -56,19 +90,17 @@ enum WindowActivation {
 }
 
 struct WindowActivationBridge: NSViewRepresentable {
-    let showsDockIcon: Bool
-
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
-            WindowActivation.activate(view.window, showsDockIcon: showsDockIcon)
+            WindowActivation.activate(view.window)
         }
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async {
-            WindowActivation.activate(nsView.window, showsDockIcon: showsDockIcon)
+            WindowActivation.activate(nsView.window)
         }
     }
 }

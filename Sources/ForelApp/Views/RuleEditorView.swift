@@ -223,7 +223,7 @@ struct RuleEditorView: View {
         .padding(22)
         .frame(width: 880, height: preferredHeight)
         .background(ForelTheme.background)
-        .background(WindowActivationBridge(showsDockIcon: model.showDockIcon))
+        .background(WindowActivationBridge())
         .onDisappear { model.cancelRuleTest() }
     }
 

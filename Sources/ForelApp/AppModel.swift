@@ -55,7 +55,6 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var detailRoute: DetailRoute = .rules
     @Published var accentPreset: AccentPreset = .default
-    @Published var showDockIcon: Bool = true
     @Published var showMenuBarIcon: Bool = true
     @Published var wantsLaunchAtLogin = false
     @Published var watcherNotificationsEnabled: Bool = true
@@ -149,9 +148,6 @@ final class AppModel: ObservableObject {
         let preset = storedAccent.flatMap(AccentPreset.init(rawValue:)) ?? .default
         self.accentPreset = preset
         ForelTheme.apply(preset)
-
-        let storedShowDockIcon = db.withLock { db in try? db.getSetting("show_dock_icon") }
-        self.showDockIcon = storedShowDockIcon.map { $0 == "1" } ?? true
 
         let storedShowMenuBarIcon = db.withLock { db in try? db.getSetting("show_menu_bar_icon") }
         self.showMenuBarIcon = storedShowMenuBarIcon.map { $0 == "1" } ?? true
@@ -324,46 +320,6 @@ final class AppModel: ObservableObject {
         let fm = FileManager.default
         guard fm.fileExists(atPath: legacyDirectory.path), !fm.fileExists(atPath: newDirectory.path) else { return }
         try? fm.moveItem(at: legacyDirectory, to: newDirectory)
-    }
-
-    func applyDockIconPreference(keepingWindowsVisible: Bool = false) {
-        let visibleWindows = NSApp.windows.filter { window in
-            window.isVisible && !(window is NSPanel)
-        }
-        let keyWindow = NSApp.keyWindow
-
-        NSApp.setActivationPolicy(showDockIcon ? .regular : .accessory)
-
-        guard keepingWindowsVisible else { return }
-
-        let windowsToRestore = visibleWindows.isEmpty
-            ? NSApp.windows.filter { !($0 is NSPanel) }
-            : visibleWindows
-
-        let restoreWindows = {
-            for window in windowsToRestore {
-                window.makeKeyAndOrderFront(nil)
-                window.orderFrontRegardless()
-            }
-            keyWindow?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        }
-
-        restoreWindows()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            for window in windowsToRestore {
-                window.makeKeyAndOrderFront(nil)
-                window.orderFrontRegardless()
-            }
-            keyWindow?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        }
-    }
-
-    func setShowDockIcon(_ enabled: Bool) {
-        showDockIcon = enabled
-        db.withLock { db in try? db.setSetting("show_dock_icon", enabled ? "1" : "0") }
-        applyDockIconPreference(keepingWindowsVisible: true)
     }
 
     func setShowMenuBarIcon(_ enabled: Bool) {
