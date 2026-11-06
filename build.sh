@@ -15,11 +15,18 @@ Commands:
   test      Run the Swift test suite
   package   Build and package a Forel.app + DMG
   release   Alias for: build + package
+  signing-setup
+            Create a free, self-signed "Forel Local Signing" certificate in
+            your login keychain. dev and package then sign with it, so macOS
+            keeps folder and Full Disk Access grants across rebuilds,
+            reinstalls and restarts instead of asking again
 
 Arguments:
   arch      universal, arm64, or x86_64 (defaults to host architecture)
   version   Release version like v1.2.3
   --sign    Sign the app and DMG with a Developer ID Application certificate
+            (without it, package signs with your local identity — see
+            signing-setup — or ad-hoc as a last resort)
   --notarize
             Submit and staple the signed app and DMG using Notary API secrets
   -i, --interactive
@@ -44,6 +51,7 @@ Non-interactive defaults:
 Examples:
   ./build.sh
   ./build.sh dev
+  ./build.sh signing-setup
   ./build.sh package
   ./build.sh package arm64 v1.2.3
   ./build.sh package arm64 v1.2.3 --sign
@@ -170,6 +178,113 @@ ${extra_keys}
 </dict>
 </plist>
 EOF
+}
+
+local_signing_name="Forel Local Signing"
+
+# Prints the SHA-1 of the code-signing identity to use for local (non
+# Developer ID) builds, or nothing when only ad-hoc signing is possible.
+# Order: $CODESIGN_IDENTITY, the self-signed identity from `signing-setup`,
+# then the keychain's only identity if there is exactly one.
+#
+# Why this matters: macOS keys every privacy grant (Desktop/Documents/
+# Downloads, removable and network volumes, Full Disk Access, Photos,
+# automation) to the app's code signature. An ad-hoc signature is just a hash
+# of the binary, so every rebuild, reinstall or update is a "new" app to TCC
+# and the user is asked again. A certificate-backed signature gives a stable
+# designated requirement (bundle id + certificate), so grants stick.
+resolve_local_signing_identity() {
+  local identities hash count
+  if [[ -n "${CODESIGN_IDENTITY:-}" ]]; then
+    echo "$CODESIGN_IDENTITY"
+    return
+  fi
+  # No -v: a self-signed certificate is "not trusted" for policy evaluation,
+  # which hides it from `-v`, but codesign signs with it just fine.
+  identities="$(security find-identity -p codesigning 2>/dev/null || true)"
+  hash="$(printf '%s\n' "$identities" | awk -v name="\"$local_signing_name\"" 'index($0, name) && $2 ~ /^[0-9A-F]{40}$/ { print $2; exit }')"
+  if [[ -n "$hash" ]]; then
+    echo "$hash"
+    return
+  fi
+  identities="$(security find-identity -v -p codesigning 2>/dev/null | awk '/^ *[0-9]+\) [0-9A-F]{40} "/ { print $2 }')"
+  count="$(printf '%s\n' "$identities" | grep -c . || true)"
+  if [[ "$count" -eq 1 ]]; then
+    echo "$identities"
+  elif [[ "$count" -gt 1 ]]; then
+    echo "Multiple code-signing identities found; set CODESIGN_IDENTITY to pick one:" >&2
+    security find-identity -v -p codesigning >&2 || true
+  fi
+}
+
+# Signs a locally built bundle with the local identity, falling back to an
+# ad-hoc signature. Either way the bundle is properly sealed (Info.plist and
+# resources bound, identifier = the bundle id) rather than left with the bare
+# linker signature SwiftPM produces, which macOS can't tie to the bundle id.
+# Sets $local_signed_with to the identity used, or empty for ad-hoc.
+sign_local_bundle() {
+  local app="$1" identity
+  identity="$(resolve_local_signing_identity)"
+  local_signed_with=""
+  xattr -cr "$app" 2>/dev/null || true
+  if [[ -n "$identity" ]]; then
+    if codesign --force --deep --entitlements "$entitlements_path" --sign "$identity" "$app" >/dev/null 2>&1; then
+      local_signed_with="$identity"
+      return
+    fi
+    echo "Signing with '$identity' failed — falling back to ad-hoc." >&2
+  fi
+  codesign --force --deep --entitlements "$entitlements_path" --sign - "$app" >/dev/null 2>&1
+}
+
+report_local_signature() {
+  if [[ -n "$local_signed_with" ]]; then
+    echo "Signed with: $local_signed_with"
+    echo "macOS will remember Forel's folder and Full Disk Access grants across rebuilds."
+  else
+    echo "Ad-hoc signed: macOS will ask for folder permissions again after every rebuild or reinstall." >&2
+    echo "Run ./build.sh signing-setup once to make the grants permanent." >&2
+  fi
+}
+
+# Creates a self-signed code-signing certificate in the login keychain. Free,
+# no Apple Developer account needed; only for builds you run yourself (other
+# Macs would still see an unidentified developer).
+setup_local_signing() {
+  local work openssl_legacy=() password
+  if security find-identity -p codesigning 2>/dev/null | grep -q "\"$local_signing_name\""; then
+    echo "\"$local_signing_name\" already exists in your keychain — nothing to do."
+    return
+  fi
+  work="$(mktemp -d "${TMPDIR:-/tmp}/forel-signing.XXXXXX")"
+  password="$(openssl rand -hex 16)"
+  cat > "$work/cert.cnf" <<EOF
+[req]
+distinguished_name = dn
+x509_extensions = ext
+prompt = no
+[dn]
+CN = $local_signing_name
+[ext]
+basicConstraints = critical, CA:false
+keyUsage = critical, digitalSignature
+extendedKeyUsage = critical, codeSigning
+EOF
+  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+    -config "$work/cert.cnf" -keyout "$work/key.pem" -out "$work/cert.pem" >/dev/null 2>&1
+  # OpenSSL 3 (e.g. Homebrew) defaults to PKCS#12 ciphers `security` can't read.
+  if openssl version 2>/dev/null | grep -q '^OpenSSL 3'; then
+    openssl_legacy=(-legacy)
+  fi
+  openssl pkcs12 -export ${openssl_legacy[@]+"${openssl_legacy[@]}"} \
+    -inkey "$work/key.pem" -in "$work/cert.pem" -name "$local_signing_name" \
+    -out "$work/identity.p12" -passout "pass:$password"
+  security import "$work/identity.p12" -P "$password" -T /usr/bin/codesign >/dev/null
+  rm -rf "$work"
+  echo "Created \"$local_signing_name\" in your login keychain."
+  echo "Next: ./build.sh package (or dev). If macOS asks whether codesign may use"
+  echo "the key, choose Always Allow. After installing the newly signed Forel,"
+  echo "grant folder access or Full Disk Access one last time; it will stick."
 }
 
 notarize_and_staple() {
@@ -329,7 +444,8 @@ run_interactive_setup() {
       "build|build    Release build only (no app bundle)" \
       "test|test     Run the test suite" \
       "package|package  Build Forel.app and a DMG to distribute" \
-      "release|release  Same as package"
+      "release|release  Same as package" \
+      "signing-setup|signing-setup  One-time: create a local certificate so macOS stops re-asking for permissions"
     command="$choice"
   fi
 
@@ -384,7 +500,7 @@ command="release"
 command_given=false
 if [[ $# -gt 0 ]]; then
   case "$1" in
-    dev|build|test|package|release)
+    dev|build|test|package|release|signing-setup)
       command="$1"
       command_given=true
       shift
@@ -513,40 +629,10 @@ case "$command" in
 
     write_info_plist "$contents_dir" "0.0.0-dev"
 
-    # Sign with a real identity when one is available, so TCC grants
-    # (removable volumes, Photos, automation) survive rebuilds. An ad-hoc
-    # signature changes with every rebuild, and macOS treats each rebuild
-    # as a new program — re-prompting for permissions the user already gave.
-    signing_identity="${CODESIGN_IDENTITY:-}"
-    if [[ -z "$signing_identity" ]]; then
-      # bash 3.2 (stock macOS) has no mapfile; parse into a newline list.
-      identity_list="$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/^ *[0-9]+\) .+"/ {print $2}')"
-      identity_count="$(printf '%s\n' "$identity_list" | grep -c . || true)"
-      if [[ "$identity_count" -eq 1 ]]; then
-        signing_identity="$identity_list"
-      elif [[ "$identity_count" -gt 1 ]]; then
-        echo "Multiple code-signing identities found; set CODESIGN_IDENTITY to pick one:" >&2
-        printf '%s\n' "$identity_list" >&2
-      fi
-    fi
-
-    if [[ -n "$signing_identity" ]]; then
-      codesign --force --deep --sign "$signing_identity" "$dev_bundle" >/dev/null 2>&1 || {
-        echo "Signing with '$signing_identity' failed — falling back to ad-hoc." >&2
-        codesign --force --deep --sign - "$dev_bundle" >/dev/null 2>&1
-        signing_identity=""
-      }
-    else
-      codesign --force --deep --sign - "$dev_bundle" >/dev/null 2>&1
-    fi
-
-    if [[ -n "$signing_identity" ]]; then
-      echo "Signed dev bundle with: $signing_identity"
-      echo "Permission prompts should now appear only once per permission."
-    else
-      echo "Ad-hoc signed: macOS will re-ask for folder/volume permissions after every rebuild." >&2
-      echo "For one-time-only prompts, sign with a stable certificate (set CODESIGN_IDENTITY)." >&2
-    fi
+    # Sign with a stable identity when one is available, so TCC grants
+    # survive rebuilds (see resolve_local_signing_identity).
+    sign_local_bundle "$dev_bundle"
+    report_local_signature
 
     # Exec the binary inside the bundle (not `open`) so stdout/stderr stay
     # attached to this terminal while macOS still reads the adjacent
@@ -562,6 +648,10 @@ case "$command" in
   test)
     cd "$repo_root"
     swift test
+    ;;
+
+  signing-setup)
+    setup_local_signing
     ;;
 
   package|release)
@@ -638,6 +728,9 @@ case "$command" in
       if [[ "$notarize_requested" == true ]]; then
         notarize_and_staple "$bundle_root"
       fi
+    else
+      sign_local_bundle "$bundle_root"
+      report_local_signature
     fi
 
     mkdir -p "$dist_dir"

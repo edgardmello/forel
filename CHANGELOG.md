@@ -12,6 +12,8 @@ All notable changes to Forel are documented here. Format loosely follows
 - Opening Forel now brings its window to the front instead of leaving it behind other apps' windows, including when it was closed the last time Forel quit.
 
 ### Added
+- Settings → Permissions shows whether Forel has Full Disk Access and links straight to it. With it on, macOS stops asking separately for Desktop, Documents, Downloads and each external or network drive.
+- `./build.sh signing-setup` creates a free local signing certificate once; builds and DMGs you make yourself are then signed with it, so macOS keeps Forel's folder and Full Disk Access grants across restarts, rebuilds and reinstalls instead of asking again.
 - Rules that depend on time ("is older than", "is within the last", "Date last matched") are now re-checked on a schedule (every 30 minutes by default, adjustable in Settings → Automation) and when the Mac wakes, so a file that turns 30 days old is handled without anything else touching it. A rule never repeats on a file it already handled unless the file changed.
 - New "Date last matched" and "Times matched" conditions remember, per rule, when and how often it matched each file, even after a rename — "Times matched is 0" runs a rule only the first time.
 - New "Duplicate" condition matches a file whose exact contents already exist in the same folder (or its subfolders); the oldest copy never counts as a duplicate, so it's the one that stays.
@@ -24,6 +26,7 @@ All notable changes to Forel are documented here. Format loosely follows
 - The rule list gained a filter field, Collapse All, and a Select mode for enabling, disabling, or deleting several rules at once.
 - Rule context menus now offer Duplicate, Move to another folder, and Copy to another folder; copies start disabled and moves keep each rule's history attached.
 - The rule editor's test results can now be filtered to matched files only, hiding the sample list of non-matches when you just want the count.
+- Unsigned packages are now properly signed for this Mac (ad-hoc when no certificate is available) instead of carrying only a bare build signature, so macOS can attribute permission grants to Forel.
 - The dev build now signs its app bundle with an available code-signing identity, so macOS remembers folder- and volume-access permission grants across rebuilds instead of asking again every time.
 - Added a ready-to-import rule pack for property documents (matrícula/RGI with page and cartório capture, IPTU, escritura, locação, condomínio, aluguel, certidão); rules import disabled for a dry run before enabling.
 - Text recognition of images and scanned PDFs now prefers Portuguese with English fallback, so accents like "matrícula" survive matching and captures on Brazilian documents.
