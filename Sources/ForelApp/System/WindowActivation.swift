@@ -62,6 +62,15 @@ enum WindowActivation {
         }
     }
 
+    /// Puts Forel back in the Dock when one of its windows is shown by a
+    /// path that didn't go through `activate` (e.g. SwiftUI reopening the
+    /// main window itself).
+    static func enterDockIfNeeded(for window: NSWindow?) {
+        guard let window, NSApp.activationPolicy() != .regular,
+              !(window is NSPanel), window.styleMask.contains(.titled) else { return }
+        activateSoon(window)
+    }
+
     /// Leaves the Dock once no Forel window is left open.
     static func leaveDockIfNoWindowsRemain(excluding excluded: NSWindow? = nil) {
         guard !hasUserFacingWindow(excluding: excluded) else { return }

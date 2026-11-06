@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the menu bar instead of putting the main window in front of the user.
     private var launchedInBackground = false
     private var windowCloseObserver: NSObjectProtocol?
+    private var windowKeyObserver: NSObjectProtocol?
 
     /// `@NSApplicationDelegateAdaptor` requires a zero-argument initializer;
     /// the app's model/updater are handed in afterward once SwiftUI has
@@ -122,10 +123,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LoginItem.setEnabled(true)
     }
 
-    func applicationWillFinishLaunching(_ notification: Notification) {
-        launchedInBackground = !Self.isInteractiveLaunch(NSAppleEventManager.shared().currentAppleEvent)
-    }
-
     /// A launch the user started themselves — from Finder, the Dock,
     /// Spotlight or `open` — arrives as a plain "open application" event.
     /// Login items carry the "launched as login item" flag on it, and
@@ -139,6 +136,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The launch's "open application" event is still the current one here.
+        launchedInBackground = !Self.isInteractiveLaunch(NSAppleEventManager.shared().currentAppleEvent)
+
         if warnAndQuitIfRunningFromDiskImage() {
             return
         }
@@ -169,6 +169,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let closing = notification.object as? NSWindow
             MainActor.assumeIsolated {
                 WindowActivation.leaveDockIfNoWindowsRemain(excluding: closing)
+            }
+        }
+
+        // Reopening the closed main window reuses the same `NSWindow` without
+        // reattaching its content, so `mainWindowDidAttach` doesn't run
+        // again; catch any Forel window coming back here instead.
+        windowKeyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: nil,
+            queue: .main
+        ) { notification in
+            let window = notification.object as? NSWindow
+            MainActor.assumeIsolated {
+                WindowActivation.enterDockIfNeeded(for: window)
             }
         }
 
