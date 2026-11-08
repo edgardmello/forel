@@ -39,6 +39,16 @@ struct ContentView: View {
         } message: {
             Text(model.errorMessage ?? "")
         }
+        .alert(
+            "Import shared rules?",
+            isPresented: sharedImportBinding,
+            presenting: model.pendingSharedImport
+        ) { pending in
+            Button("Import \(pending.rules.count == 1 ? "Rule" : "\(pending.rules.count) Rules")") { model.confirmSharedImport() }
+            Button("Cancel", role: .cancel) { model.pendingSharedImport = nil }
+        } message: { pending in
+            Text(sharedImportMessage(pending))
+        }
         .sheet(isPresented: $model.showHazelImportAssistant) {
             HazelImportAssistantView()
                 .environmentObject(model)
@@ -47,6 +57,22 @@ struct ContentView: View {
         // ForelTheme.accent is a plain static var, not observable; bumping the
         // identity here forces every descendant to rebuild and re-read it.
         .id(model.accentVersion)
+    }
+
+    private var sharedImportBinding: Binding<Bool> {
+        Binding(
+            get: { model.pendingSharedImport != nil },
+            set: { if !$0 { model.pendingSharedImport = nil } }
+        )
+    }
+
+    private func sharedImportMessage(_ pending: AppModel.SharedRuleImport) -> String {
+        let folderName = (pending.folder.path as NSString).lastPathComponent
+        var text = "\(pending.rules.map { "“\($0.name)”" }.joined(separator: ", ")) will be added to \(folderName), turned off so you can check them with a Dry Run first."
+        if !pending.warnings.isEmpty {
+            text += "\n\nThese rules run code, delete files, or send files elsewhere — review them before enabling:\n" + pending.warnings.joined(separator: "\n")
+        }
+        return text
     }
 
     private var errorBinding: Binding<Bool> {

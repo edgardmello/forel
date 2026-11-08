@@ -276,6 +276,12 @@ struct RuleListView: View {
         }
 
         Button {
+            model.copyShareLink(for: rule)
+        } label: {
+            Label("Copy Share Link", systemImage: "link")
+        }
+
+        Button {
             model.toggleRule(rule, enabled: !rule.enabled)
         } label: {
             Label(rule.enabled ? "Disable" : "Enable",

@@ -286,7 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 continue
             }
             model.handle(url: url)
-            if model.errorMessage != nil { openMainWindow() }
+            if model.errorMessage != nil || model.pendingSharedImport != nil { openMainWindow() }
         }
     }
 

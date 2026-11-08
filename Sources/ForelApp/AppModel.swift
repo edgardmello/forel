@@ -956,6 +956,69 @@ final class AppModel: ObservableObject {
             if paused { togglePaused() }
         case .open:
             break
+        case .importRules(let data):
+            prepareSharedImport(data)
+        }
+    }
+
+    // MARK: - Shared rule links
+
+    /// Rules from a `forel://import` link, waiting for the user to confirm.
+    struct SharedRuleImport: Identifiable {
+        let id = UUID()
+        let folder: WatchedFolder
+        let rules: [Rule]
+        let warnings: [String]
+    }
+
+    @Published var pendingSharedImport: SharedRuleImport?
+
+    private func prepareSharedImport(_ data: Data) {
+        guard let folder = folders.first(where: { $0.id == selectedFolderId }) ?? folders.first else {
+            showNotice(title: "Add a watched folder first", message: "Shared rules are imported into a watched folder. Add one with + next to Watched Folders, then open the link again.")
+            return
+        }
+        do {
+            let result = try RuleTransfer.importRules(from: data, folderId: folder.id, disabled: true)
+            guard !result.rules.isEmpty else {
+                showNotice(title: "No rules in this link", message: "The link opened Forel but doesn't contain any rules.")
+                return
+            }
+            pendingSharedImport = SharedRuleImport(folder: folder, rules: result.rules, warnings: RuleShareLink.warnings(for: result.rules))
+        } catch {
+            showNotice(title: "This link doesn't contain Forel rules", message: "Forel couldn't read rules from the link. It may have been cut short when it was copied; ask for the link again.")
+        }
+    }
+
+    func confirmSharedImport() {
+        guard let pending = pendingSharedImport else { return }
+        pendingSharedImport = nil
+        do {
+            try db.withLock { db in
+                for rule in pending.rules { try db.insertRule(rule) }
+            }
+            selectedFolderId = pending.folder.id
+            detailRoute = .rules
+            reloadRules()
+            showRunNowMessage(RunNowMessage(
+                text: "Imported \(pending.rules.count) rule\(pending.rules.count == 1 ? "" : "s"), turned off — try a Dry Run before enabling",
+                hasFailures: false,
+                folderId: pending.folder.id
+            ))
+        } catch {
+            showError(error)
+        }
+    }
+
+    /// Copies a `forel://import` link for `rule` to the clipboard.
+    func copyShareLink(for rule: Rule) {
+        do {
+            let url = try RuleShareLink.url(for: [rule])
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(url.absoluteString, forType: .string)
+            showRunNowMessage(RunNowMessage(text: "Copied a link to “\(rule.name)”", hasFailures: false, folderId: rule.folderId))
+        } catch {
+            showError(error)
         }
     }
 
