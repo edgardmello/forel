@@ -53,6 +53,63 @@ import Foundation
         }
     }
 
+    @Test func ruleLastRanThrottlesTheRuleAcrossFiles() throws {
+        try withMemory { db in
+            let dir = TempDir()
+            let first = dir.file("a.txt", contents: "a")
+            let second = dir.file("b.txt", contents: "b")
+            let folder = WatchedFolder(path: dir.path)
+            try db.insertFolder(folder)
+            var rule = makeRule(folderId: folder.id, name: "throttled")
+            rule.conditions = [makeCondition(.ruleLastRan, .olderThan, "10 minutes", ruleId: rule.id)]
+            rule.actions = [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["seen"])]), ruleId: rule.id)]
+            try db.insertRule(rule)
+
+            #expect(RuleMatchMemory.shared.lastMatch(ruleId: rule.id) == nil)
+            #expect(RuleEngine.run(path: first, depth: 0, rules: [rule], batchId: "b1", root: dir.path).matched == ["throttled"])
+            // Another file right after: the rule ran less than 10 minutes ago.
+            #expect(RuleEngine.run(path: second, depth: 0, rules: [rule], batchId: "b2", root: dir.path).matched.isEmpty)
+            #expect(ConditionEvaluator.evaluate(makeCondition(.ruleLastRan, .withinLast, "1 hours", ruleId: rule.id), path: second))
+
+            let later = Date().addingTimeInterval(11 * 60)
+            ScheduleConditions.$clock.withValue(later) {
+                #expect(RuleEngine.run(path: second, depth: 0, rules: [rule], batchId: "b3", root: dir.path).matched == ["throttled"])
+            }
+        }
+    }
+
+    @Test func explainGivesEachRulesVerdict() throws {
+        try withMemory { db in
+            let dir = TempDir()
+            let sub = dir.dir("Sub")
+            let file = dir.file("invoice.pdf", contents: "x")
+            let deep = (sub as NSString).appendingPathComponent("deep.pdf")
+            try "x".write(toFile: deep, atomically: true, encoding: .utf8)
+            let folder = WatchedFolder(path: dir.path)
+            try db.insertFolder(folder)
+
+            var tagger = makeRule(folderId: folder.id, name: "tag pdfs")
+            tagger.conditions = [makeCondition(.extension_, .is, "pdf", ruleId: tagger.id)]
+            tagger.actions = [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["PDF"])]), ruleId: tagger.id)]
+            var images = makeRule(folderId: folder.id, name: "images")
+            images.conditions = [makeCondition(.kind, .is, "image", ruleId: images.id)]
+            let off = makeRule(folderId: folder.id, name: "off", enabled: false)
+            for rule in [tagger, images, off] { try db.insertRule(rule) }
+            let rules = [tagger, images, off]
+
+            var verdicts = RuleEngine.explain(path: file, rules: rules, root: dir.path).rules.map(\.verdict)
+            #expect(verdicts == [.matches, .conditionsFail, .turnedOff])
+            #expect(RuleEngine.explain(path: file, rules: rules, root: dir.path).rules[1].conditions.first?.matched == false)
+
+            _ = RuleEngine.run(path: file, depth: 0, rules: [tagger], batchId: "b", root: dir.path)
+            verdicts = RuleEngine.explain(path: file, rules: rules, root: dir.path).rules.map(\.verdict)
+            #expect(verdicts.first == .alreadyHandled)
+
+            #expect(RuleEngine.explain(path: deep, rules: [tagger], root: dir.path).rules.first?.verdict == .outOfScope)
+            #expect(RuleEngine.explain(path: "/tmp/elsewhere.pdf", rules: rules, root: dir.path).skippedReason != nil)
+        }
+    }
+
     @Test func neverMatchedCountsAsMatchedLongAgo() throws {
         try withMemory { _ in
             let dir = TempDir()

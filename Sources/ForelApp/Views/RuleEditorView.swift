@@ -634,6 +634,22 @@ private struct ConditionRow: View {
                 options: DuplicateScope.allCases.map(\.rawValue),
                 label: { value in DuplicateScope(rawValue: value)?.label ?? value }
             )
+        case .timeOfDay:
+            TimeOfDayValueEditor(value: $condition.value)
+        case .weekday:
+            StringSelectMenu(
+                selection: $condition.value,
+                options: WeekdayValue.allCases.map(\.rawValue),
+                label: { value in WeekdayValue(rawValue: value)?.label ?? value }
+            )
+        case .powerSource:
+            StringSelectMenu(
+                selection: $condition.value,
+                options: PowerSourceValue.allCases.map(\.rawValue),
+                label: { value in PowerSourceValue(rawValue: value)?.label ?? value }
+            )
+        case .shortDuration:
+            RelativeDateValueEditor(value: $condition.value, units: ["minutes", "hours", "days"], defaultValue: "10 minutes")
         }
     }
 
@@ -693,6 +709,10 @@ private struct ConditionRow: View {
         case .number: return "0"
         case .spotlightMetadata: return SpotlightMetadataCondition.make(key: "kMDItemAuthors", value: "")
         case .duplicateScope: return DuplicateScope.sameFolder.rawValue
+        case .timeOfDay: return operator_ == .before ? "18:00" : "08:00"
+        case .weekday: return WeekdayValue.weekdays.rawValue
+        case .shortDuration: return "10 minutes"
+        case .powerSource: return PowerSourceValue.powerAdapter.rawValue
         case .absoluteDate:
             return operator_.usesRelativeDateValue ? "7 days" : DateValueFormatter.string(from: Date())
         default: return ""
@@ -893,12 +913,14 @@ private struct AbsoluteDateValueEditor: View {
 
 private struct RelativeDateValueEditor: View {
     @Binding var value: String
+    var units = ["days", "weeks", "months", "years"]
+    var defaultValue = "7 days"
 
     var body: some View {
         HStack(spacing: 8) {
-            GlassField(placeholder: "7", text: numberBinding)
+            GlassField(placeholder: parts.number, text: numberBinding)
                 .frame(width: 72)
-            StringSelectMenu(selection: unitBinding, options: ["days", "weeks", "months", "years"])
+            StringSelectMenu(selection: unitBinding, options: units)
             .frame(width: 120)
             Spacer(minLength: 0)
         }
@@ -919,10 +941,39 @@ private struct RelativeDateValueEditor: View {
     }
 
     private var parts: (number: String, unit: String) {
+        let defaults = defaultValue.split(separator: " ", maxSplits: 1).map(String.init)
         let pieces = value.split(separator: " ", maxSplits: 1).map(String.init)
         let number = pieces.first?.filter(\.isNumber)
-        let unit = pieces.count > 1 ? pieces[1] : "days"
-        return ((number?.isEmpty == false ? number! : "7"), ["days", "weeks", "months", "years"].contains(unit) ? unit : "days")
+        let unit = pieces.count > 1 ? pieces[1] : (defaults.last ?? units[0])
+        return ((number?.isEmpty == false ? number! : (defaults.first ?? "7")), units.contains(unit) ? unit : units[0])
+    }
+}
+
+/// "HH:mm" with the system time picker, in the Mac's own clock format.
+private struct TimeOfDayValueEditor: View {
+    @Binding var value: String
+
+    var body: some View {
+        HStack {
+            DatePicker("Time", selection: dateBinding, displayedComponents: .hourAndMinute)
+                .labelsHidden()
+                .datePickerStyle(.field)
+                .fixedSize()
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var dateBinding: Binding<Date> {
+        Binding(
+            get: {
+                let minutes = ScheduleConditions.minutes(value) ?? 8 * 60
+                return Calendar.current.date(byAdding: .minute, value: minutes, to: Calendar.current.startOfDay(for: Date())) ?? Date()
+            },
+            set: { date in
+                let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+                value = ScheduleConditions.timeString(minutes: (parts.hour ?? 0) * 60 + (parts.minute ?? 0))
+            }
+        )
     }
 }
 
@@ -1304,7 +1355,7 @@ private struct ActionRow: View {
         case .runScript:
             scriptEditor(
                 placeholder: "echo \"$FOREL_FILE\"",
-                help: "The variable $FOREL_FILE contains its full path, e.g. /Users/you/Downloads/report.pdf. Always quote it: \"$FOREL_FILE\".",
+                help: "The variable $FOREL_FILE contains its full path, e.g. /Users/you/Downloads/report.pdf. Always quote it: \"$FOREL_FILE\". Also set: $FOREL_NAME, $FOREL_STEM, $FOREL_EXTENSION, $FOREL_DIR, $FOREL_FOLDER, $FOREL_RULE, and $FOREL_CAPTURE_<NAME> for each named regex group. What the script prints is shown in Activity.",
                 fileHelp: "The script gets its full path in $FOREL_FILE and as its first argument ($1). An executable script runs with the interpreter in its #! line; otherwise it runs with bash.",
                 fileTypes: [.shellScript, .script, .unixExecutable],
                 editor: nil
@@ -1534,6 +1585,9 @@ private struct ActionRow: View {
                 )
             } else {
                 ScriptEditor(placeholder: placeholder, text: paramBinding(ActionParam.script))
+                if let language = ScriptLanguage(kind: action.kind, shell: ScriptShell.of(action)) {
+                    GenerateCodeButton(language: language, script: paramBinding(ActionParam.script))
+                }
             }
             Text("Runs once per matching file. \(source == .file ? fileHelp : help) Dry Run doesn't run scripts, and changes made by a script can't be undone.")
                 .font(.caption)
@@ -1594,6 +1648,8 @@ private struct ActionOptionsView: View {
                 renameOptions
             case .convertImage:
                 convertImageOptions
+            case .runScript:
+                shellOptions
             default:
                 Text("No options for this action.")
                     .font(.system(size: 12))
@@ -1687,6 +1743,31 @@ private struct ActionOptionsView: View {
             }
             .toggleStyle(.switch)
             .controlSize(.small)
+        }
+    }
+
+    private var shellOptions: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Shell")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(ForelTheme.secondaryText)
+
+            StringSelectMenu(
+                selection: Binding(
+                    get: { ScriptShell.of(action).rawValue },
+                    set: { paramBinding(ActionParam.shell).wrappedValue = $0 }
+                ),
+                options: ScriptShell.allCases.map(\.rawValue),
+                label: { value in ScriptShell(rawValue: value)?.label ?? value }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(ScriptSource.of(action) == .file
+                 ? "Applies to embedded scripts. A script file runs with the interpreter in its #! line."
+                 : "Your login shell reads your profile, so tools you added to your PATH there are found. Homebrew's folders are always added to PATH.")
+                .font(.system(size: 11))
+                .foregroundStyle(ForelTheme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

@@ -171,7 +171,9 @@ public enum RuleEngine {
                 let matchKey = RuleMatchMemory.fileKey(currentPath)
                 let captures = namedCaptures(rule, path: currentPath)
                 let result = TokenExpander.$captures.withValue(captures) {
-                    runActions(rule, path: currentPath, batchId: batchId, root: root)
+                    ActionExecutor.$currentRuleName.withValue(rule.name) {
+                        runActions(rule, path: currentPath, batchId: batchId, root: root)
+                    }
                 }
                 RuleMatchMemory.shared.recordMatch(ruleId: rule.id, fileKey: matchKey, finalPath: result.finalPath)
                 history.append(contentsOf: result.history)
@@ -458,6 +460,11 @@ public enum RuleEngine {
         }
     }
 
+    /// Whether `rule` looks at items `depth` levels below its folder.
+    public static func isInScope(_ rule: Rule, depth: Int) -> Bool {
+        ruleInScope(rule, depth: depth)
+    }
+
     private static func ruleInScope(_ rule: Rule, depth: Int) -> Bool {
         guard let limit = rule.recursionDepth else { return true }
         if limit >= 0 { return depth <= Int(limit) }
@@ -517,7 +524,8 @@ public enum RuleEngine {
     /// the watcher already sees.
     public static func isTimeDependent(_ rule: Rule) -> Bool {
         rule.conditions.contains { condition in
-            condition.operator.usesRelativeDateValue || condition.kind == .dateLastMatched
+            condition.operator.usesRelativeDateValue
+                || [.dateLastMatched, .timeOfDay, .dayOfWeek, .ruleLastRan, .powerSource].contains(condition.kind)
         }
     }
 
@@ -618,6 +626,7 @@ public enum RuleEngine {
                             resultPath: resultPath,
                             undo: applied.undo.toJSON(),
                             reversible: applied.undo.isReversible,
+                            message: applied.message,
                             resultVolumeId: resultIdentity?.volumeId,
                             resultFileId: resultIdentity?.fileId
                         )

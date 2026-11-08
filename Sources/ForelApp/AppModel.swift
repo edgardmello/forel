@@ -18,6 +18,7 @@ import Foundation
 import ForelCore
 import Combine
 import AppKit
+import IOKit.ps
 import UserNotifications
 
 private let historyCleanupInterval: TimeInterval = 3600
@@ -59,6 +60,7 @@ final class AppModel: ObservableObject {
     @Published var wantsLaunchAtLogin = false
     @Published var watcherNotificationsEnabled: Bool = true
     @Published var historyMaxDays: Int = 30
+    @Published private(set) var aiSettings = AISettings()
     /// Minutes between re-checks of time-dependent rules; 0 turns them off.
     @Published private(set) var recheckIntervalMinutes: Int = 30
     @Published private(set) var trashCleanupPolicy = TrashCleanupPolicy()
@@ -90,6 +92,10 @@ final class AppModel: ObservableObject {
     private let ruleRunStatsWindowDays = 30
     private var historyCleanupTimer: AnyCancellable?
     private var recheckTimer: AnyCancellable?
+    private var scheduleBoundaryTimer: Timer?
+    private var powerSourceRunLoopSource: CFRunLoopSource?
+    private var lowPowerObserver: NSObjectProtocol?
+    private var lastPowerState = PowerState.current
     private var wakeObserver: NSObjectProtocol?
     private var pendingWatcherNotification = PendingWatcherNotification()
     private var watcherNotificationTask: Task<Void, Never>?
@@ -162,6 +168,7 @@ final class AppModel: ObservableObject {
         self.historyMaxDays = min(max(storedMaxDays ?? 30, 1), 30)
 
         self.ruleExpansionPreferences = db.withLock { db in RuleExpansionPreferences.load(from: db) }
+        self.aiSettings = db.withLock { db in AISettings.load(from: db) }
 
         let storedRecheck = db.withLock { db in (try? db.getSetting("recheck_interval_minutes")).flatMap { Int($0) } }
         self.recheckIntervalMinutes = max(storedRecheck ?? 30, 0)
@@ -180,6 +187,7 @@ final class AppModel: ObservableObject {
         startRecheckTimer()
         observeVolumeMounts()
         observeWake()
+        observePowerSource()
         if recheckIntervalMinutes > 0 { recheckNow() }
     }
 
@@ -220,7 +228,9 @@ final class AppModel: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.recheckIntervalMinutes > 0 else { return }
+                guard let self else { return }
+                self.scheduleBoundaryRecheck()
+                guard self.recheckIntervalMinutes > 0 else { return }
                 self.recheckNow()
             }
         }
@@ -300,6 +310,48 @@ final class AppModel: ObservableObject {
     private func volumeDidMount(atPath mountPoint: String) {
         volumeNotifier.volumeConnected((mountPoint as NSString).lastPathComponent)
         coordinator.volumeDidMount(atPath: mountPoint)
+        guard !paused else { return }
+        let root = (mountPoint as NSString).standardizingPath
+        let onVolume = folders.filter { folder in
+            let path = (folder.path as NSString).standardizingPath
+            return folder.enabled && (path == root || path.hasPrefix(root + "/"))
+        }.map(\.path)
+        guard !onVolume.isEmpty else { return }
+        // The folder's events stopped when its disk went away: watch it
+        // again, and catch up on what changed while it was gone.
+        for path in onVolume {
+            coordinator.remove(path)
+            coordinator.add(path)
+        }
+        coordinator.catchUp(watchedFolders: onVolume)
+    }
+
+    /// Plugging in (or leaving Low Power Mode) re-checks rules that wait
+    /// for the power adapter.
+    private func observePowerSource() {
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        if let source = IOPSNotificationCreateRunLoopSource({ context in
+            guard let context else { return }
+            let model = Unmanaged<AppModel>.fromOpaque(context).takeUnretainedValue()
+            MainActor.assumeIsolated { model.powerSourceDidChange() }
+        }, context)?.takeRetainedValue() {
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
+            powerSourceRunLoopSource = source
+        }
+        lowPowerObserver = NotificationCenter.default.addObserver(
+            forName: .NSProcessInfoPowerStateDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.powerSourceDidChange() }
+        }
+    }
+
+    private func powerSourceDidChange() {
+        let state = PowerState.current
+        guard state != lastPowerState else { return }
+        lastPowerState = state
+        recheckNow()
     }
 
     private static func locateHazel() -> URL? {
@@ -320,6 +372,14 @@ final class AppModel: ObservableObject {
         let fm = FileManager.default
         guard fm.fileExists(atPath: legacyDirectory.path), !fm.fileExists(atPath: newDirectory.path) else { return }
         try? fm.moveItem(at: legacyDirectory, to: newDirectory)
+    }
+
+    func updateAISettings(_ change: (inout AISettings) -> Void) {
+        var settings = aiSettings
+        change(&settings)
+        guard settings != aiSettings else { return }
+        aiSettings = settings
+        db.withLock { db in try? settings.save(to: db) }
     }
 
     func setShowMenuBarIcon(_ enabled: Bool) {
@@ -455,6 +515,31 @@ final class AppModel: ObservableObject {
         guard let folderId = selectedFolderId else { rules = []; return }
         rules = db.withLock { db in (try? db.listRules(folderId: folderId)) ?? [] }
         reloadRuleRunStats()
+        scheduleBoundaryRecheck()
+    }
+
+    /// Re-checks rules the moment a "Time of day" window opens or closes,
+    /// or the day changes for "Day of the week", instead of waiting for
+    /// the next periodic re-check. Rescheduled whenever rules change.
+    func scheduleBoundaryRecheck() {
+        scheduleBoundaryTimer?.invalidate()
+        scheduleBoundaryTimer = nil
+        let allRules = db.withLock { db -> [Rule] in
+            ((try? db.listFolders()) ?? []).filter(\.enabled).flatMap { folder in
+                (try? db.listRules(folderId: folder.id)) ?? []
+            }
+        }
+        guard let next = ScheduleConditions.nextBoundary(after: Date(), rules: allRules) else { return }
+        // A few seconds late, so the boundary minute has begun everywhere.
+        let timer = Timer(fire: next.addingTimeInterval(2), interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.recheckNow()
+                self?.scheduleBoundaryRecheck()
+            }
+        }
+        timer.tolerance = 5
+        RunLoop.main.add(timer, forMode: .common)
+        scheduleBoundaryTimer = timer
     }
 
     func reloadHistory() {
@@ -871,6 +956,95 @@ final class AppModel: ObservableObject {
             if paused { togglePaused() }
         case .open:
             break
+        case .importRules(let data):
+            prepareSharedImport(data)
+        }
+    }
+
+    // MARK: - Shared rule links
+
+    /// Rules from a `forel://import` link, waiting for the user to confirm.
+    struct SharedRuleImport: Identifiable {
+        let id = UUID()
+        let folder: WatchedFolder
+        let rules: [Rule]
+        let warnings: [String]
+    }
+
+    @Published var pendingSharedImport: SharedRuleImport?
+
+    // MARK: - Explain a file
+
+    @Published var fileExplanation: FileExplanation?
+    @Published private(set) var isExplainingFile = false
+
+    /// Shows how every rule of the watched folder holding `path` judges it.
+    func explainFile(_ path: String) {
+        let standardized = (path as NSString).standardizingPath
+        let containing = folders
+            .filter { standardized.hasPrefix(($0.path as NSString).standardizingPath + "/") }
+            .max { $0.path.count < $1.path.count }
+        guard let folder = containing else {
+            showNotice(title: "Not in a watched folder", message: "“\((path as NSString).lastPathComponent)” isn't inside any folder Forel watches, so no rule looks at it. Add its folder under Watched Folders first.")
+            return
+        }
+        let folderRules = db.withLock { db in (try? db.listRules(folderId: folder.id)) ?? [] }
+        isExplainingFile = true
+        Task {
+            let explanation = await Task.detached(priority: .userInitiated) {
+                RuleEngine.explain(path: standardized, rules: folderRules, root: folder.path)
+            }.value
+            isExplainingFile = false
+            fileExplanation = explanation
+        }
+    }
+
+    private func prepareSharedImport(_ data: Data) {
+        guard let folder = folders.first(where: { $0.id == selectedFolderId }) ?? folders.first else {
+            showNotice(title: "Add a watched folder first", message: "Shared rules are imported into a watched folder. Add one with + next to Watched Folders, then open the link again.")
+            return
+        }
+        do {
+            let result = try RuleTransfer.importRules(from: data, folderId: folder.id, disabled: true)
+            guard !result.rules.isEmpty else {
+                showNotice(title: "No rules in this link", message: "The link opened Forel but doesn't contain any rules.")
+                return
+            }
+            pendingSharedImport = SharedRuleImport(folder: folder, rules: result.rules, warnings: RuleShareLink.warnings(for: result.rules))
+        } catch {
+            showNotice(title: "This link doesn't contain Forel rules", message: "Forel couldn't read rules from the link. It may have been cut short when it was copied; ask for the link again.")
+        }
+    }
+
+    func confirmSharedImport() {
+        guard let pending = pendingSharedImport else { return }
+        pendingSharedImport = nil
+        do {
+            try db.withLock { db in
+                for rule in pending.rules { try db.insertRule(rule) }
+            }
+            selectedFolderId = pending.folder.id
+            detailRoute = .rules
+            reloadRules()
+            showRunNowMessage(RunNowMessage(
+                text: "Imported \(pending.rules.count) rule\(pending.rules.count == 1 ? "" : "s"), turned off — try a Dry Run before enabling",
+                hasFailures: false,
+                folderId: pending.folder.id
+            ))
+        } catch {
+            showError(error)
+        }
+    }
+
+    /// Copies a `forel://import` link for `rule` to the clipboard.
+    func copyShareLink(for rule: Rule) {
+        do {
+            let url = try RuleShareLink.url(for: [rule])
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(url.absoluteString, forType: .string)
+            showRunNowMessage(RunNowMessage(text: "Copied a link to “\(rule.name)”", hasFailures: false, folderId: rule.folderId))
+        } catch {
+            showError(error)
         }
     }
 

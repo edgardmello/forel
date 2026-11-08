@@ -168,6 +168,26 @@ public enum ConditionEvaluator {
 
         case .aiClassification:
             return evaluateAIClassification(condition, path: path).matched
+
+        case .timeOfDay:
+            return ScheduleConditions.matchTimeOfDay(condition.operator, condition.value, at: ScheduleConditions.now)
+
+        case .dayOfWeek:
+            return ScheduleConditions.matchDayOfWeek(condition.operator, condition.value, at: ScheduleConditions.now)
+
+        case .powerSource:
+            guard let value = PowerSourceValue(rawValue: condition.value) else { return false }
+            let matches = PowerState.current.matches(value)
+            switch condition.operator {
+            case .is: return matches
+            case .isNot: return !matches
+            default: return false
+            }
+
+        case .ruleLastRan:
+            // A rule that never ran counts as having run infinitely long ago.
+            let last = RuleMatchMemory.shared.lastMatch(ruleId: condition.ruleId) ?? .distantPast
+            return matchDate(condition.operator, last, condition.value)
         }
     }
 
@@ -431,9 +451,11 @@ public enum ConditionEvaluator {
         let unitPart = String(s[splitIndex...]).trimmingCharacters(in: .whitespaces).lowercased()
         guard let n = Int(numPart) else { return nil }
 
-        let now = Date()
+        let now = ScheduleConditions.now
         var component: Calendar.Component
         switch unitPart {
+        case "minute", "minutes": component = .minute
+        case "hour", "hours": component = .hour
         case "day", "days": component = .day
         case "week", "weeks": component = .weekOfYear
         case "month", "months": component = .month

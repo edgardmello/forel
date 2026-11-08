@@ -89,6 +89,12 @@ public final class RuleMatchMemory: @unchecked Sendable {
         }
     }
 
+    /// When `ruleId` last matched any file, for "Rule last ran".
+    public func lastMatch(ruleId: String) -> Date? {
+        guard let db else { return nil }
+        return db.withLock { db in try? db.getRuleLastMatchedAt(ruleId: ruleId) } ?? nil
+    }
+
     /// True when `ruleId` already matched this file and the file hasn't
     /// changed since — the periodic re-check leaves such pairs alone, the
     /// same way Hazel runs a rule on a file only once until it changes.

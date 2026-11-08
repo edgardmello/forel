@@ -276,6 +276,12 @@ struct RuleListView: View {
         }
 
         Button {
+            model.copyShareLink(for: rule)
+        } label: {
+            Label("Copy Share Link", systemImage: "link")
+        }
+
+        Button {
             model.toggleRule(rule, enabled: !rule.enabled)
         } label: {
             Label(rule.enabled ? "Disable" : "Enable",
@@ -667,9 +673,18 @@ private struct RuleDetails: View {
             RuleDetailRow(
                 icon: condition.kind.iconSystemName,
                 badge: condition.kind.label,
-                title: "\(condition.operator.label) \(condition.kind == .duplicate ? (DuplicateScope(rawValue: condition.value)?.label ?? condition.value) : condition.value)",
+                title: "\(condition.operator.label) \(conditionValueLabel(condition))",
                 detail: nil
             )
+        }
+    }
+
+    private func conditionValueLabel(_ condition: Condition) -> String {
+        switch condition.kind {
+        case .duplicate: return DuplicateScope(rawValue: condition.value)?.label ?? condition.value
+        case .dayOfWeek: return WeekdayValue(rawValue: condition.value)?.label ?? condition.value
+        case .powerSource: return PowerSourceValue(rawValue: condition.value)?.label ?? condition.value
+        default: return condition.value
         }
     }
 

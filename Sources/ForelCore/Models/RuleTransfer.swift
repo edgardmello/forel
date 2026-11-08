@@ -50,19 +50,24 @@ public enum RuleTransfer {
         static let currentVersion = 2
     }
 
-    public static func exportForel(_ rules: [Rule]) throws -> Data {
+    public static func exportForel(_ rules: [Rule], encoder: JSONEncoder? = nil) throws -> Data {
         let export = NativeExport(format: "forel-rules", version: NativeExport.currentVersion, rules: rules)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let encoder = encoder ?? {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            return encoder
+        }()
         return try encoder.encode(export)
     }
 
-    public static func importRules(from data: Data, folderId: String) throws -> RuleImportResult {
+    /// `disabled` imports every rule turned off, for rules that come from
+    /// someone else (a shared link) and should get a Dry Run first.
+    public static func importRules(from data: Data, folderId: String, disabled: Bool = false) throws -> RuleImportResult {
         if let native = try? JSONDecoder().decode(NativeExport.self, from: data) {
             guard native.format == "forel-rules", (1...NativeExport.currentVersion).contains(native.version) else {
                 throw RuleTransferError.invalidNativeFile
             }
-            return RuleImportResult(rules: native.rules.map { remap($0, folderId: folderId) }, issues: [])
+            return RuleImportResult(rules: native.rules.map { remap($0, folderId: folderId, disabled: disabled) }, issues: [])
         }
         return try importHazel(data: data, folderId: folderId)
     }

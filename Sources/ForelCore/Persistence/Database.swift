@@ -774,6 +774,15 @@ public final class Database: @unchecked Sendable {
         )
     }
 
+    /// The latest match of `ruleId` on any file. Timestamps are UTC ISO 8601
+    /// strings of one format, so the text maximum is the latest.
+    public func getRuleLastMatchedAt(ruleId: String) throws -> Date? {
+        let stmt = try statement("SELECT MAX(last_matched_at) FROM rule_match_state WHERE rule_id=?1")
+        stmt.bind(1, ruleId)
+        guard try stmt.step(), let value = stmt.columnTextOrNil(0) else { return nil }
+        return ISO8601DateFormatter.forelUTC.date(from: value)
+    }
+
     /// Counts one more match of `ruleId` on the file, stamping it with
     /// `matchedAt` and the file's fingerprint after the rule's actions ran.
     /// Does nothing when the rule no longer exists (it was deleted while

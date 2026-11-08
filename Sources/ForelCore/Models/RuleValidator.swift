@@ -48,6 +48,15 @@ public enum RuleValidator {
             if condition.value.trimmingCharacters(in: .whitespaces).isEmpty {
                 return Issue(message: "Condition value cannot be empty")
             }
+            if condition.kind == .timeOfDay, ScheduleConditions.minutes(condition.value) == nil {
+                return Issue(message: "Time of day must be a time like 08:30")
+            }
+            if condition.kind == .dayOfWeek, WeekdayValue(rawValue: condition.value) == nil {
+                return Issue(message: "Choose a day of the week")
+            }
+            if condition.kind == .powerSource, PowerSourceValue(rawValue: condition.value) == nil {
+                return Issue(message: "Choose a power source")
+            }
             if condition.operator == .matchesRegex,
                (try? NSRegularExpression(pattern: condition.value)) == nil {
                 return Issue(message: "Regex pattern is invalid")

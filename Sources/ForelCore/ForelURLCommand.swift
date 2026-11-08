@@ -29,6 +29,8 @@ public enum ForelURLCommand: Equatable, Sendable {
     case pause
     case resume
     case open
+    /// Import the rules a shared link carries (`.forelrules` data).
+    case importRules(Data)
 
     public static let scheme = "forel"
 
@@ -61,6 +63,12 @@ public enum ForelURLCommand: Equatable, Sendable {
         case "recheck": self = .recheck
         case "pause": self = .pause
         case "resume": self = .resume
+        case RuleShareLink.host:
+            // Base64 is case-sensitive: read the raw value, not a trimmed or
+            // lowercased one.
+            guard let raw = query.first(where: { $0.name.lowercased() == RuleShareLink.queryName })?.value,
+                  let data = RuleShareLink.data(fromValue: raw) else { return nil }
+            self = .importRules(data)
         case "open", "": self = .open
         default: return nil
         }
