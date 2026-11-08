@@ -69,6 +69,8 @@ struct SettingsView: View {
                     generalPane
                 case .automation:
                     AutomationSettingsPane()
+                case .ai:
+                    AISettingsPane()
                 case .permissions:
                     PermissionsSection()
                 case .updates:
@@ -288,7 +290,7 @@ struct SettingsView: View {
 }
 
 private enum SettingsCategory: CaseIterable, Identifiable {
-    case general, automation, permissions, updates, about
+    case general, automation, ai, permissions, updates, about
 
     var id: Self { self }
 
@@ -296,6 +298,7 @@ private enum SettingsCategory: CaseIterable, Identifiable {
         switch self {
         case .general: "General"
         case .automation: "Automation"
+        case .ai: "AI"
         case .permissions: "Permissions"
         case .updates: "Updates"
         case .about: "About"
@@ -306,6 +309,7 @@ private enum SettingsCategory: CaseIterable, Identifiable {
         switch self {
         case .general: "gearshape.fill"
         case .automation: "clock.arrow.2.circlepath"
+        case .ai: "sparkles"
         case .permissions: "lock.shield.fill"
         case .updates: "arrow.triangle.2.circlepath"
         case .about: "info.circle.fill"
@@ -320,6 +324,7 @@ private enum SettingsCategory: CaseIterable, Identifiable {
         switch self {
         case .general: Color(red: 0.36, green: 0.34, blue: 0.90)
         case .automation: Color(red: 0.55, green: 0.36, blue: 0.85)
+        case .ai: Color(red: 0.90, green: 0.33, blue: 0.62)
         case .permissions: Color(red: 0.95, green: 0.55, blue: 0.13)
         case .updates: Color(red: 0.20, green: 0.70, blue: 0.45)
         case .about: Color(red: 0.31, green: 0.55, blue: 0.95)

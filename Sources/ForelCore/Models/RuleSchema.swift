@@ -263,6 +263,7 @@ public enum ActionParam {
     public static let script = "script"
     public static let scriptSource = "script_source"
     public static let scriptPath = "script_path"
+    public static let shell = "shell"
     public static let shortcutName = "shortcut_name"
     public static let shortcutInputMode = "shortcut_input_mode"
     public static let applicationPath = "application_path"
@@ -449,9 +450,9 @@ public extension ActionKind {
     /// have none, instead of showing an empty "No options" popover.
     var hasOptions: Bool {
         switch self {
-        case .moveToFolder, .copyToFolder, .sortIntoSubfolder, .syncToFolder, .syncFolders, .runShortcut, .openApplication, .rename, .importToLibrary, .uncompress, .convertImage:
+        case .moveToFolder, .copyToFolder, .sortIntoSubfolder, .syncToFolder, .syncFolders, .runShortcut, .openApplication, .rename, .importToLibrary, .uncompress, .convertImage, .runScript:
             return true
-        case .upload, .addTag, .removeTag, .setColorLabel, .addComment, .toggleExtension, .toggleLock, .archive, .runScript, .runAppleScript, .runJavaScript, .runAutomatorWorkflow, .open, .showInFinder, .makeAlias, .moveToTrash, .delete, .pause, .displayNotification, .runRulesOnFolderContents, .ignore, .compressPDF, .makeSearchablePDF:
+        case .upload, .addTag, .removeTag, .setColorLabel, .addComment, .toggleExtension, .toggleLock, .archive, .runAppleScript, .runJavaScript, .runAutomatorWorkflow, .open, .showInFinder, .makeAlias, .moveToTrash, .delete, .pause, .displayNotification, .runRulesOnFolderContents, .ignore, .compressPDF, .makeSearchablePDF:
             return false
         }
     }

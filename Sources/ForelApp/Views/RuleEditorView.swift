@@ -1304,7 +1304,7 @@ private struct ActionRow: View {
         case .runScript:
             scriptEditor(
                 placeholder: "echo \"$FOREL_FILE\"",
-                help: "The variable $FOREL_FILE contains its full path, e.g. /Users/you/Downloads/report.pdf. Always quote it: \"$FOREL_FILE\".",
+                help: "The variable $FOREL_FILE contains its full path, e.g. /Users/you/Downloads/report.pdf. Always quote it: \"$FOREL_FILE\". Also set: $FOREL_NAME, $FOREL_STEM, $FOREL_EXTENSION, $FOREL_DIR, $FOREL_FOLDER, $FOREL_RULE, and $FOREL_CAPTURE_<NAME> for each named regex group. What the script prints is shown in Activity.",
                 fileHelp: "The script gets its full path in $FOREL_FILE and as its first argument ($1). An executable script runs with the interpreter in its #! line; otherwise it runs with bash.",
                 fileTypes: [.shellScript, .script, .unixExecutable],
                 editor: nil
@@ -1534,6 +1534,9 @@ private struct ActionRow: View {
                 )
             } else {
                 ScriptEditor(placeholder: placeholder, text: paramBinding(ActionParam.script))
+                if let language = ScriptLanguage(kind: action.kind, shell: ScriptShell.of(action)) {
+                    GenerateCodeButton(language: language, script: paramBinding(ActionParam.script))
+                }
             }
             Text("Runs once per matching file. \(source == .file ? fileHelp : help) Dry Run doesn't run scripts, and changes made by a script can't be undone.")
                 .font(.caption)
@@ -1594,6 +1597,8 @@ private struct ActionOptionsView: View {
                 renameOptions
             case .convertImage:
                 convertImageOptions
+            case .runScript:
+                shellOptions
             default:
                 Text("No options for this action.")
                     .font(.system(size: 12))
@@ -1687,6 +1692,31 @@ private struct ActionOptionsView: View {
             }
             .toggleStyle(.switch)
             .controlSize(.small)
+        }
+    }
+
+    private var shellOptions: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Shell")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(ForelTheme.secondaryText)
+
+            StringSelectMenu(
+                selection: Binding(
+                    get: { ScriptShell.of(action).rawValue },
+                    set: { paramBinding(ActionParam.shell).wrappedValue = $0 }
+                ),
+                options: ScriptShell.allCases.map(\.rawValue),
+                label: { value in ScriptShell(rawValue: value)?.label ?? value }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(ScriptSource.of(action) == .file
+                 ? "Applies to embedded scripts. A script file runs with the interpreter in its #! line."
+                 : "Your login shell reads your profile, so tools you added to your PATH there are found. Homebrew's folders are always added to PATH.")
+                .font(.system(size: 11))
+                .foregroundStyle(ForelTheme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

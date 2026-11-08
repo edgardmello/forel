@@ -59,6 +59,7 @@ final class AppModel: ObservableObject {
     @Published var wantsLaunchAtLogin = false
     @Published var watcherNotificationsEnabled: Bool = true
     @Published var historyMaxDays: Int = 30
+    @Published private(set) var aiSettings = AISettings()
     /// Minutes between re-checks of time-dependent rules; 0 turns them off.
     @Published private(set) var recheckIntervalMinutes: Int = 30
     @Published private(set) var trashCleanupPolicy = TrashCleanupPolicy()
@@ -162,6 +163,7 @@ final class AppModel: ObservableObject {
         self.historyMaxDays = min(max(storedMaxDays ?? 30, 1), 30)
 
         self.ruleExpansionPreferences = db.withLock { db in RuleExpansionPreferences.load(from: db) }
+        self.aiSettings = db.withLock { db in AISettings.load(from: db) }
 
         let storedRecheck = db.withLock { db in (try? db.getSetting("recheck_interval_minutes")).flatMap { Int($0) } }
         self.recheckIntervalMinutes = max(storedRecheck ?? 30, 0)
@@ -320,6 +322,14 @@ final class AppModel: ObservableObject {
         let fm = FileManager.default
         guard fm.fileExists(atPath: legacyDirectory.path), !fm.fileExists(atPath: newDirectory.path) else { return }
         try? fm.moveItem(at: legacyDirectory, to: newDirectory)
+    }
+
+    func updateAISettings(_ change: (inout AISettings) -> Void) {
+        var settings = aiSettings
+        change(&settings)
+        guard settings != aiSettings else { return }
+        aiSettings = settings
+        db.withLock { db in try? settings.save(to: db) }
     }
 
     func setShowMenuBarIcon(_ enabled: Bool) {

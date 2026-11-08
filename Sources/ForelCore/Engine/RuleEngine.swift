@@ -171,7 +171,9 @@ public enum RuleEngine {
                 let matchKey = RuleMatchMemory.fileKey(currentPath)
                 let captures = namedCaptures(rule, path: currentPath)
                 let result = TokenExpander.$captures.withValue(captures) {
-                    runActions(rule, path: currentPath, batchId: batchId, root: root)
+                    ActionExecutor.$currentRuleName.withValue(rule.name) {
+                        runActions(rule, path: currentPath, batchId: batchId, root: root)
+                    }
                 }
                 RuleMatchMemory.shared.recordMatch(ruleId: rule.id, fileKey: matchKey, finalPath: result.finalPath)
                 history.append(contentsOf: result.history)
@@ -618,6 +620,7 @@ public enum RuleEngine {
                             resultPath: resultPath,
                             undo: applied.undo.toJSON(),
                             reversible: applied.undo.isReversible,
+                            message: applied.message,
                             resultVolumeId: resultIdentity?.volumeId,
                             resultFileId: resultIdentity?.fileId
                         )

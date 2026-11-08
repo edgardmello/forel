@@ -120,11 +120,14 @@ public struct Applied {
     /// `Undo`) but the rule engine still needs to know the copy exists, to
     /// evaluate it against the rules that follow.
     public let copiedPath: String?
+    /// What the action reported, shown in Activity — a script's output.
+    public let message: String?
 
-    public init(newPath: String, undo: Undo, copiedPath: String? = nil) {
+    public init(newPath: String, undo: Undo, copiedPath: String? = nil, message: String? = nil) {
         self.newPath = newPath
         self.undo = undo
         self.copiedPath = copiedPath
+        self.message = message
     }
 }
 
@@ -276,7 +279,7 @@ public enum ActionExecutor {
         case .archive:
             return try archive(path: path)
         case .runScript:
-            return try runScript(action, path: path)
+            return try runScript(action, path: path, root: root)
         case .runShortcut:
             return try runShortcut(action, path: path)
         case .runAppleScript:
@@ -673,7 +676,7 @@ public enum ActionExecutor {
 
     private static let scriptDefaultTimeout: TimeInterval = 60
 
-    private static func runScript(_ action: Action, path: String) throws -> Applied {
+    private static func runScript(_ action: Action, path: String, root: String?) throws -> Applied {
         let process = Process()
         if ScriptSource.of(action) == .file {
             // A script file also gets the matched file as $1. An executable
@@ -688,12 +691,23 @@ public enum ActionExecutor {
             }
         } else {
             let script = try stringParam(action, ActionParam.script, "RunScript")
-            process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = ["-c", script]
+            let command = ScriptShell.of(action).command(for: script)
+            process.executableURL = URL(fileURLWithPath: command.executable)
+            process.arguments = command.arguments
         }
-        var env = ProcessInfo.processInfo.environment
-        env["FOREL_FILE"] = path
-        process.environment = env
+        process.environment = ScriptEnvironment.environment(
+            variables: ScriptEnvironment.variables(
+                path: path,
+                root: root,
+                ruleName: currentRuleName,
+                captures: TokenExpander.captures
+            )
+        )
+
+        let output = ScriptOutputCollector()
+        let errors = ScriptOutputCollector()
+        process.standardOutput = output.pipe
+        process.standardError = errors.pipe
         try process.run()
 
         let startTime = Date()
@@ -707,13 +721,71 @@ public enum ActionExecutor {
             if process.isRunning {
                 process.interrupt()
             }
+            output.finish()
+            errors.finish()
             throw ActionError("script timed out after \(Int(scriptDefaultTimeout))s")
         }
 
+        let outputText = output.finish()
+        let errorText = errors.finish()
         guard process.terminationStatus == 0 else {
-            throw ActionError("script exited with status \(process.terminationStatus)")
+            throw ActionError(ScriptEnvironment.failureMessage(
+                status: process.terminationStatus,
+                output: outputText,
+                errors: errorText
+            ))
         }
-        return Applied(newPath: path, undo: .none)
+        return Applied(newPath: path, undo: .none, message: ScriptEnvironment.storedOutput(outputText))
+    }
+
+    /// The rule whose actions are running, for the `FOREL_RULE` variable.
+    @TaskLocal public static var currentRuleName: String? = nil
+
+    /// Collects what a script writes without ever blocking it: the pipe is
+    /// drained as data arrives, and only the last 64 KB are kept. Waiting for
+    /// the end of the output is bounded, because a script that starts a
+    /// background process (`open`, `cmd &`) leaves the pipe open after it
+    /// exits.
+    private final class ScriptOutputCollector: @unchecked Sendable {
+        let pipe = Pipe()
+        private var data = Data()
+        private var closed = false
+        private let lock = NSLock()
+        private let limit = 64 * 1024
+
+        init() {
+            pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                let chunk = handle.availableData
+                guard let self else { return }
+                self.lock.lock()
+                if chunk.isEmpty {
+                    self.closed = true
+                    handle.readabilityHandler = nil
+                } else {
+                    self.data.append(chunk)
+                    if self.data.count > self.limit {
+                        self.data = self.data.suffix(self.limit)
+                    }
+                }
+                self.lock.unlock()
+            }
+        }
+
+        @discardableResult
+        func finish(wait: TimeInterval = 1) -> String {
+            let deadline = Date().addingTimeInterval(wait)
+            while Date() < deadline {
+                lock.lock()
+                let isClosed = closed
+                lock.unlock()
+                if isClosed { break }
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+            pipe.fileHandleForReading.readabilityHandler = nil
+            lock.lock()
+            defer { lock.unlock() }
+            return String(decoding: data, as: UTF8.self)
+        }
     }
 
     private static func runShortcut(_ action: Action, path: String) throws -> Applied {

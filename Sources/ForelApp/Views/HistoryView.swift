@@ -224,9 +224,11 @@ private struct HistoryRow: View {
                     .truncationMode(.middle)
                 if let message = entry.message, !message.isEmpty {
                     Text(message)
-                        .font(.system(size: 10))
-                        .foregroundStyle(statusColor)
-                        .lineLimit(2)
+                        .font(.system(size: 10, design: entry.actionKind == .runScript ? .monospaced : .default))
+                        .foregroundStyle(entry.status == .applied ? ForelTheme.secondaryText : statusColor)
+                        .lineLimit(4)
+                        .textSelection(.enabled)
+                        .help(message)
                 }
             }
 
