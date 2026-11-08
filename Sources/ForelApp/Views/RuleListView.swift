@@ -677,6 +677,7 @@ private struct RuleDetails: View {
         switch condition.kind {
         case .duplicate: return DuplicateScope(rawValue: condition.value)?.label ?? condition.value
         case .dayOfWeek: return WeekdayValue(rawValue: condition.value)?.label ?? condition.value
+        case .powerSource: return PowerSourceValue(rawValue: condition.value)?.label ?? condition.value
         default: return condition.value
         }
     }

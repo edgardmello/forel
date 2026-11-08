@@ -520,7 +520,7 @@ public enum RuleEngine {
     public static func isTimeDependent(_ rule: Rule) -> Bool {
         rule.conditions.contains { condition in
             condition.operator.usesRelativeDateValue
-                || [.dateLastMatched, .timeOfDay, .dayOfWeek, .ruleLastRan].contains(condition.kind)
+                || [.dateLastMatched, .timeOfDay, .dayOfWeek, .ruleLastRan, .powerSource].contains(condition.kind)
         }
     }
 

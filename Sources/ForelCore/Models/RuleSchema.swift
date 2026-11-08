@@ -84,6 +84,8 @@ public enum ConditionValueKind: Sendable, Equatable {
     case weekday
     /// A relative duration in minutes, hours or days ("10 minutes").
     case shortDuration
+    /// A `PowerSourceValue`.
+    case powerSource
 }
 
 // MARK: - Condition kinds
@@ -120,6 +122,7 @@ public extension ConditionKind {
         case .timeOfDay: return "Time of day"
         case .dayOfWeek: return "Day of the week"
         case .ruleLastRan: return "Rule last ran"
+        case .powerSource: return "Mac runs on"
         }
     }
 
@@ -141,7 +144,7 @@ public extension ConditionKind {
             return [.is]
         case .timeOfDay:
             return [.after, .before]
-        case .dayOfWeek:
+        case .dayOfWeek, .powerSource:
             return [.is, .isNot]
         case .ruleLastRan:
             return [.olderThan, .withinLast]
@@ -170,6 +173,7 @@ public extension ConditionKind {
         case .timeOfDay: return .timeOfDay
         case .dayOfWeek: return .weekday
         case .ruleLastRan: return .shortDuration
+        case .powerSource: return .powerSource
         }
     }
 
@@ -204,6 +208,7 @@ public extension ConditionKind {
         case .timeOfDay: return "clock"
         case .dayOfWeek: return "calendar"
         case .ruleLastRan: return "timer"
+        case .powerSource: return "powerplug"
         }
     }
 
@@ -228,6 +233,8 @@ public extension ConditionKind {
             return "The time on this Mac when the rule runs, not a date of the file. Combine \"after\" and \"before\" for a window; rules are re-checked when it opens."
         case .dayOfWeek:
             return "The day when the rule runs, not a date of the file. Rules are re-checked at midnight."
+        case .powerSource:
+            return "Whether this Mac is plugged in when the rule runs. Rules wait and are re-checked when you plug it in. A desktop Mac always runs on the power adapter."
         case .ruleLastRan:
             return "When this rule last ran on any file. \"Is older than 10 minutes\" makes the rule act at most once every 10 minutes."
         case .aiClassification:
@@ -571,7 +578,7 @@ public enum RuleSchema {
             .dateLastMatched, .timesMatched, .ruleLastRan,
         ]),
         ConditionKindGroup(title: "Schedule", kinds: [
-            .timeOfDay, .dayOfWeek,
+            .timeOfDay, .dayOfWeek, .powerSource,
         ]),
         ConditionKindGroup(title: "Metadata", kinds: [
             .downloadedFromWebsite, .downloadedWithApp, .spotlightMetadata,

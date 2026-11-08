@@ -117,6 +117,7 @@ public enum ConditionKind: String, Codable, Equatable, Sendable {
     case timeOfDay = "time_of_day"
     case dayOfWeek = "day_of_week"
     case ruleLastRan = "rule_last_ran"
+    case powerSource = "power_source"
 
     public init(dbValue: String) {
         self = ConditionKind(rawValue: dbValue) ?? .name

@@ -642,6 +642,12 @@ private struct ConditionRow: View {
                 options: WeekdayValue.allCases.map(\.rawValue),
                 label: { value in WeekdayValue(rawValue: value)?.label ?? value }
             )
+        case .powerSource:
+            StringSelectMenu(
+                selection: $condition.value,
+                options: PowerSourceValue.allCases.map(\.rawValue),
+                label: { value in PowerSourceValue(rawValue: value)?.label ?? value }
+            )
         case .shortDuration:
             RelativeDateValueEditor(value: $condition.value, units: ["minutes", "hours", "days"], defaultValue: "10 minutes")
         }
@@ -706,6 +712,7 @@ private struct ConditionRow: View {
         case .timeOfDay: return operator_ == .before ? "18:00" : "08:00"
         case .weekday: return WeekdayValue.weekdays.rawValue
         case .shortDuration: return "10 minutes"
+        case .powerSource: return PowerSourceValue.powerAdapter.rawValue
         case .absoluteDate:
             return operator_.usesRelativeDateValue ? "7 days" : DateValueFormatter.string(from: Date())
         default: return ""

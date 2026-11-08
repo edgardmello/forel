@@ -565,6 +565,31 @@ public final class WatcherCoordinator: @unchecked Sendable {
         }
     }
 
+    /// A disk holding watched folders was connected: runs every rule on
+    /// what's in them, like the watcher would have had the disk stayed
+    /// connected. Files already handled and unchanged since are skipped.
+    public func catchUp(watchedFolders paths: [String]) {
+        processingQueue.async { [weak self] in
+            for path in paths { self?.performCatchUp(root: path) }
+        }
+    }
+
+    /// Synchronous body of `catchUp(watchedFolders:)`, for tests.
+    func performCatchUp(root: String) {
+        let rules = db.withLock { db -> [Rule] in
+            guard let folder = ((try? db.listFolders()) ?? []).first(where: { $0.enabled && $0.path == root }) else { return [] }
+            return (try? db.listRules(folderId: folder.id)) ?? []
+        }
+        let enabled = rules.filter(\.enabled)
+        guard !enabled.isEmpty, FileManager.default.fileExists(atPath: root) else { return }
+        beginProcessing(root: root)
+        RuleEngine.forEachEntry(root: root, maxDepth: RuleEngine.maxRuleDepth(enabled)) { entry in
+            guard settling[entry.path] == nil, settlingAncestor(of: entry.path) == nil else { return }
+            handle(path: entry.path, depth: entry.depth, rules: rules, watchedRoot: root)
+        }
+        endProcessing(root: root)
+    }
+
     /// Synchronous body of `recheckTimeDependentRules`, for tests.
     func performRecheck() {
         let folders = db.withLock { db -> [(WatchedFolder, [Rule])] in

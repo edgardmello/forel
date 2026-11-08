@@ -83,3 +83,24 @@ struct ScheduleConditionTests {
         #expect(RuleValidator.validate([makeCondition(.ruleLastRan, .olderThan, "10 minutes")]).isEmpty)
     }
 }
+
+struct PowerSourceConditionTests {
+    @Test func powerSourceFollowsThePowerState() {
+        let file = TempDir().file("x.txt", contents: "x")
+        let plugged = makeCondition(.powerSource, .is, PowerSourceValue.powerAdapter.rawValue)
+        let lowPower = makeCondition(.powerSource, .isNot, PowerSourceValue.lowPowerMode.rawValue)
+        PowerState.$override.withValue(PowerState(onBattery: false, lowPowerMode: false)) {
+            #expect(ConditionEvaluator.evaluate(plugged, path: file))
+            #expect(ConditionEvaluator.evaluate(lowPower, path: file))
+        }
+        PowerState.$override.withValue(PowerState(onBattery: true, lowPowerMode: true)) {
+            #expect(!ConditionEvaluator.evaluate(plugged, path: file))
+            #expect(ConditionEvaluator.evaluate(makeCondition(.powerSource, .is, "battery"), path: file))
+            #expect(!ConditionEvaluator.evaluate(lowPower, path: file))
+        }
+        var rule = makeRule(name: "plugged in")
+        rule.conditions = [plugged]
+        #expect(RuleEngine.isTimeDependent(rule))
+        #expect(!RuleValidator.validate([makeCondition(.powerSource, .is, "solar")]).isEmpty)
+    }
+}

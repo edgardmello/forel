@@ -18,6 +18,7 @@ import Foundation
 import ForelCore
 import Combine
 import AppKit
+import IOKit.ps
 import UserNotifications
 
 private let historyCleanupInterval: TimeInterval = 3600
@@ -92,6 +93,9 @@ final class AppModel: ObservableObject {
     private var historyCleanupTimer: AnyCancellable?
     private var recheckTimer: AnyCancellable?
     private var scheduleBoundaryTimer: Timer?
+    private var powerSourceRunLoopSource: CFRunLoopSource?
+    private var lowPowerObserver: NSObjectProtocol?
+    private var lastPowerState = PowerState.current
     private var wakeObserver: NSObjectProtocol?
     private var pendingWatcherNotification = PendingWatcherNotification()
     private var watcherNotificationTask: Task<Void, Never>?
@@ -183,6 +187,7 @@ final class AppModel: ObservableObject {
         startRecheckTimer()
         observeVolumeMounts()
         observeWake()
+        observePowerSource()
         if recheckIntervalMinutes > 0 { recheckNow() }
     }
 
@@ -305,6 +310,48 @@ final class AppModel: ObservableObject {
     private func volumeDidMount(atPath mountPoint: String) {
         volumeNotifier.volumeConnected((mountPoint as NSString).lastPathComponent)
         coordinator.volumeDidMount(atPath: mountPoint)
+        guard !paused else { return }
+        let root = (mountPoint as NSString).standardizingPath
+        let onVolume = folders.filter { folder in
+            let path = (folder.path as NSString).standardizingPath
+            return folder.enabled && (path == root || path.hasPrefix(root + "/"))
+        }.map(\.path)
+        guard !onVolume.isEmpty else { return }
+        // The folder's events stopped when its disk went away: watch it
+        // again, and catch up on what changed while it was gone.
+        for path in onVolume {
+            coordinator.remove(path)
+            coordinator.add(path)
+        }
+        coordinator.catchUp(watchedFolders: onVolume)
+    }
+
+    /// Plugging in (or leaving Low Power Mode) re-checks rules that wait
+    /// for the power adapter.
+    private func observePowerSource() {
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        if let source = IOPSNotificationCreateRunLoopSource({ context in
+            guard let context else { return }
+            let model = Unmanaged<AppModel>.fromOpaque(context).takeUnretainedValue()
+            MainActor.assumeIsolated { model.powerSourceDidChange() }
+        }, context)?.takeRetainedValue() {
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
+            powerSourceRunLoopSource = source
+        }
+        lowPowerObserver = NotificationCenter.default.addObserver(
+            forName: .NSProcessInfoPowerStateDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.powerSourceDidChange() }
+        }
+    }
+
+    private func powerSourceDidChange() {
+        let state = PowerState.current
+        guard state != lastPowerState else { return }
+        lastPowerState = state
+        recheckNow()
     }
 
     private static func locateHazel() -> URL? {

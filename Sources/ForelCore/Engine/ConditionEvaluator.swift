@@ -175,6 +175,15 @@ public enum ConditionEvaluator {
         case .dayOfWeek:
             return ScheduleConditions.matchDayOfWeek(condition.operator, condition.value, at: ScheduleConditions.now)
 
+        case .powerSource:
+            guard let value = PowerSourceValue(rawValue: condition.value) else { return false }
+            let matches = PowerState.current.matches(value)
+            switch condition.operator {
+            case .is: return matches
+            case .isNot: return !matches
+            default: return false
+            }
+
         case .ruleLastRan:
             // A rule that never ran counts as having run infinitely long ago.
             let last = RuleMatchMemory.shared.lastMatch(ruleId: condition.ruleId) ?? .distantPast

@@ -54,6 +54,9 @@ public enum RuleValidator {
             if condition.kind == .dayOfWeek, WeekdayValue(rawValue: condition.value) == nil {
                 return Issue(message: "Choose a day of the week")
             }
+            if condition.kind == .powerSource, PowerSourceValue(rawValue: condition.value) == nil {
+                return Issue(message: "Choose a power source")
+            }
             if condition.operator == .matchesRegex,
                (try? NSRegularExpression(pattern: condition.value)) == nil {
                 return Issue(message: "Regex pattern is invalid")

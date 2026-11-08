@@ -81,6 +81,26 @@ import Foundation
         #expect(FileManager.default.fileExists(atPath: file))
     }
 
+    @Test func catchUpRunsRulesOnceOnAReconnectedFolder() throws {
+        let db = try makeDB()
+        let dir = TempDir()
+        let file = dir.file("photo.txt", contents: "x")
+        let folder = WatchedFolder(path: dir.path)
+        try db.insertFolder(folder)
+        var rule = makeRule(folderId: folder.id, name: "tag arrivals")
+        rule.actions = [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["Imported"])]), ruleId: rule.id)]
+        try db.insertRule(rule)
+
+        let coordinator = WatcherCoordinator(db: db)
+        coordinator.performCatchUp(root: dir.path)
+        #expect(FinderTags.read(file).contains("Imported"))
+        #expect(try db.listHistory().count == 1)
+
+        // Mounting again doesn't redo files that haven't changed.
+        coordinator.performCatchUp(root: dir.path)
+        #expect(try db.listHistory().count == 1)
+    }
+
     @Test func handleTriggersPlanAndExecution() throws {
         let db = try makeDB()
         let dir = TempDir()
