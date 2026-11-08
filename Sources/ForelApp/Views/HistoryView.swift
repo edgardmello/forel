@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import SwiftUI
+import AppKit
 import ForelCore
 
 struct HistoryView: View {
@@ -25,6 +26,24 @@ struct HistoryView: View {
         return grouped
             .map { (id: $0.key, entries: $0.value) }
             .sorted { ($0.entries.first?.createdAt ?? "") > ($1.entries.first?.createdAt ?? "") }
+    }
+
+    private var explanationBinding: Binding<FileExplanation?> {
+        Binding(get: { model.fileExplanation }, set: { model.fileExplanation = $0 })
+    }
+
+    private func chooseFileToExplain() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a file in a watched folder to see why its rules did or didn't run"
+        panel.prompt = "Explain"
+        if let folder = model.folders.first(where: { $0.id == model.historyFolderFilterId }) ?? model.folders.first {
+            panel.directoryURL = URL(fileURLWithPath: folder.path)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        model.explainFile(url.path)
     }
 
     var body: some View {
@@ -58,9 +77,20 @@ struct HistoryView: View {
 
                 Spacer()
 
-                if model.isLoadingHistory {
+                if model.isLoadingHistory || model.isExplainingFile {
                     ProgressView()
                         .controlSize(.small)
+                }
+
+                Button {
+                    chooseFileToExplain()
+                } label: {
+                    Label("Explain a File…", systemImage: "questionmark.circle")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .help("Pick a file to see why each rule did or didn't act on it")
+                .sheet(item: explanationBinding) { explanation in
+                    FileExplanationView(explanation: explanation, onClose: { model.fileExplanation = nil })
                 }
             }
 

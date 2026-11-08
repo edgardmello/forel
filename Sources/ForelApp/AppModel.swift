@@ -973,6 +973,32 @@ final class AppModel: ObservableObject {
 
     @Published var pendingSharedImport: SharedRuleImport?
 
+    // MARK: - Explain a file
+
+    @Published var fileExplanation: FileExplanation?
+    @Published private(set) var isExplainingFile = false
+
+    /// Shows how every rule of the watched folder holding `path` judges it.
+    func explainFile(_ path: String) {
+        let standardized = (path as NSString).standardizingPath
+        let containing = folders
+            .filter { standardized.hasPrefix(($0.path as NSString).standardizingPath + "/") }
+            .max { $0.path.count < $1.path.count }
+        guard let folder = containing else {
+            showNotice(title: "Not in a watched folder", message: "“\((path as NSString).lastPathComponent)” isn't inside any folder Forel watches, so no rule looks at it. Add its folder under Watched Folders first.")
+            return
+        }
+        let folderRules = db.withLock { db in (try? db.listRules(folderId: folder.id)) ?? [] }
+        isExplainingFile = true
+        Task {
+            let explanation = await Task.detached(priority: .userInitiated) {
+                RuleEngine.explain(path: standardized, rules: folderRules, root: folder.path)
+            }.value
+            isExplainingFile = false
+            fileExplanation = explanation
+        }
+    }
+
     private func prepareSharedImport(_ data: Data) {
         guard let folder = folders.first(where: { $0.id == selectedFolderId }) ?? folders.first else {
             showNotice(title: "Add a watched folder first", message: "Shared rules are imported into a watched folder. Add one with + next to Watched Folders, then open the link again.")

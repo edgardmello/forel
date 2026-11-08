@@ -460,6 +460,11 @@ public enum RuleEngine {
         }
     }
 
+    /// Whether `rule` looks at items `depth` levels below its folder.
+    public static func isInScope(_ rule: Rule, depth: Int) -> Bool {
+        ruleInScope(rule, depth: depth)
+    }
+
     private static func ruleInScope(_ rule: Rule, depth: Int) -> Bool {
         guard let limit = rule.recursionDepth else { return true }
         if limit >= 0 { return depth <= Int(limit) }

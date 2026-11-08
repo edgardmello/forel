@@ -78,6 +78,38 @@ import Foundation
         }
     }
 
+    @Test func explainGivesEachRulesVerdict() throws {
+        try withMemory { db in
+            let dir = TempDir()
+            let sub = dir.dir("Sub")
+            let file = dir.file("invoice.pdf", contents: "x")
+            let deep = (sub as NSString).appendingPathComponent("deep.pdf")
+            try "x".write(toFile: deep, atomically: true, encoding: .utf8)
+            let folder = WatchedFolder(path: dir.path)
+            try db.insertFolder(folder)
+
+            var tagger = makeRule(folderId: folder.id, name: "tag pdfs")
+            tagger.conditions = [makeCondition(.extension_, .is, "pdf", ruleId: tagger.id)]
+            tagger.actions = [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["PDF"])]), ruleId: tagger.id)]
+            var images = makeRule(folderId: folder.id, name: "images")
+            images.conditions = [makeCondition(.kind, .is, "image", ruleId: images.id)]
+            let off = makeRule(folderId: folder.id, name: "off", enabled: false)
+            for rule in [tagger, images, off] { try db.insertRule(rule) }
+            let rules = [tagger, images, off]
+
+            var verdicts = RuleEngine.explain(path: file, rules: rules, root: dir.path).rules.map(\.verdict)
+            #expect(verdicts == [.matches, .conditionsFail, .turnedOff])
+            #expect(RuleEngine.explain(path: file, rules: rules, root: dir.path).rules[1].conditions.first?.matched == false)
+
+            _ = RuleEngine.run(path: file, depth: 0, rules: [tagger], batchId: "b", root: dir.path)
+            verdicts = RuleEngine.explain(path: file, rules: rules, root: dir.path).rules.map(\.verdict)
+            #expect(verdicts.first == .alreadyHandled)
+
+            #expect(RuleEngine.explain(path: deep, rules: [tagger], root: dir.path).rules.first?.verdict == .outOfScope)
+            #expect(RuleEngine.explain(path: "/tmp/elsewhere.pdf", rules: rules, root: dir.path).skippedReason != nil)
+        }
+    }
+
     @Test func neverMatchedCountsAsMatchedLongAgo() throws {
         try withMemory { _ in
             let dir = TempDir()
