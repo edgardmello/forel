@@ -61,6 +61,12 @@ struct ForelMacApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 900, height: 620)
         .commands {
+            CommandGroup(after: .newItem) {
+                Button("Find Rule…") {
+                    model.isShowingRulePalette = true
+                }
+                .keyboardShortcut("k", modifiers: .command)
+            }
             CommandGroup(replacing: .appInfo) {
                 Button("About Forel") {
                     var options: [NSApplication.AboutPanelOptionKey: Any] = [

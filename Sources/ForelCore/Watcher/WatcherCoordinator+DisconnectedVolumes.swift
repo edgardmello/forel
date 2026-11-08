@@ -75,6 +75,14 @@ extension WatcherCoordinator {
             }
         }
         let failed = history.filter { $0.status == .failed }
+        eventLog.append(LoggedEvent(
+            kind: .volumeUnavailable,
+            path: path,
+            message: "\(volumes.joined(separator: ", ")) isn't connected"
+                + (willRetry ? " — the rules run again when it is" : ""),
+            ruleNames: Array(Set(failed.map(\.ruleName))).sorted(),
+            isError: true
+        ))
         onVolumeUnavailable?(VolumeUnavailableEvent(
             volumes: volumes,
             ruleNames: Array(Set(failed.map(\.ruleName))).sorted(),

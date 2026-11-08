@@ -263,8 +263,8 @@ public final class Database: @unchecked Sendable {
         }
     }
 
-    public func listHistory(limit: Int? = nil, offset: Int = 0, directoryPath: String? = nil) throws -> [HistoryEntry] {
-        let (whereClause, bindings) = Self.historyDirectoryFilter(directoryPath)
+    public func listHistory(limit: Int? = nil, offset: Int = 0, directoryPath: String? = nil, matching search: String? = nil) throws -> [HistoryEntry] {
+        let (whereClause, bindings) = Self.historyFilter(directoryPath: directoryPath, search: search)
         let limitClause = limit.map { " LIMIT \($0) OFFSET \(max(offset, 0))" } ?? ""
         let stmt = try statement("SELECT \(Self.historyColumns) FROM action_history\(whereClause) ORDER BY created_at DESC, id DESC\(limitClause)")
         bindHistoryDirectoryFilter(bindings, to: stmt)
@@ -273,8 +273,8 @@ public final class Database: @unchecked Sendable {
         return entries
     }
 
-    public func countHistory(directoryPath: String? = nil) throws -> Int {
-        let (whereClause, bindings) = Self.historyDirectoryFilter(directoryPath)
+    public func countHistory(directoryPath: String? = nil, matching search: String? = nil) throws -> Int {
+        let (whereClause, bindings) = Self.historyFilter(directoryPath: directoryPath, search: search)
         let stmt = try statement("SELECT COUNT(*) FROM action_history\(whereClause)")
         bindHistoryDirectoryFilter(bindings, to: stmt)
         _ = try stmt.step()
@@ -339,6 +339,38 @@ public final class Database: @unchecked Sendable {
             ))
         }
         return stats
+    }
+
+    /// The WHERE clause for listing history in `directoryPath` (when given)
+    /// whose rule, paths, message or action match every word of `search`.
+    private static func historyFilter(directoryPath: String?, search: String?) -> (String, [String]) {
+        var clauses: [String] = []
+        var bindings: [String] = []
+        if directoryPath != nil {
+            let (clause, values) = historyDirectoryFilter(directoryPath)
+            clauses.append("(" + clause.replacingOccurrences(of: " WHERE ", with: "") + ")")
+            bindings += values
+        }
+        let words = (search ?? "").split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        for word in words {
+            let pattern = "%" + escapeLikePattern(word) + "%"
+            var parts = ["rule_name", "original_path", "result_path", "message"].map { column -> String in
+                bindings.append(pattern)
+                return "\(column) LIKE ?\(bindings.count) ESCAPE '\\'"
+            }
+            // Actions are stored by key ("move_to_folder") but shown by
+            // label ("Move to folder"), so match the label.
+            let kinds = RuleSchema.actionKinds.filter {
+                $0.label.range(of: word, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+            }
+            for kind in kinds {
+                bindings.append(kind.rawValue)
+                parts.append("action_kind = ?\(bindings.count)")
+            }
+            clauses.append("(" + parts.joined(separator: " OR ") + ")")
+        }
+        guard !clauses.isEmpty else { return ("", []) }
+        return (" WHERE " + clauses.joined(separator: " AND "), bindings)
     }
 
     private static func historyDirectoryFilter(_ directoryPath: String?) -> (String, [String]) {
