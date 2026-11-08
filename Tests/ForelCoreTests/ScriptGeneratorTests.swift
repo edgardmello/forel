@@ -131,4 +131,18 @@ struct ScriptGeneratorTests {
             try ScriptGenerator.models(fromResponse: Data(#"{"data":[]}"#.utf8), statusCode: 200)
         }
     }
+
+    @Test func alibabaPlanKeysAreExplainedBeforeSending() throws {
+        let alibaba = AISettings(enabled: true, provider: .alibabaSingapore)
+        #expect(throws: ScriptGenerator.planKeyProblem(settings: alibaba, apiKey: "sk-sp-123")!) {
+            try ScriptGenerator.modelsRequest(settings: alibaba, apiKey: " sk-sp-123")
+        }
+        #expect(throws: ScriptGenerationError.self) {
+            try ScriptGenerator.request(description: "zip it", language: .shell(.bash), settings: alibaba, apiKey: "sk-sp-123", tools: [], macOSVersion: "26")
+        }
+        // A regular Model Studio key, or the same key on another service, goes through.
+        _ = try ScriptGenerator.modelsRequest(settings: alibaba, apiKey: "sk-123")
+        let custom = AISettings(enabled: true, provider: .custom, baseURL: "https://x.test/v1", model: "m")
+        _ = try ScriptGenerator.modelsRequest(settings: custom, apiKey: "sk-sp-123")
+    }
 }
