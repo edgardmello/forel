@@ -204,6 +204,7 @@ public enum ScriptGenerator {
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ScriptGenerationError("Add your \(settings.provider.label) API key in Settings → AI.")
         }
+        if let problem = planKeyProblem(settings: settings, apiKey: apiKey) { throw problem }
         guard !settings.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ScriptGenerationError("Choose a model in Settings → AI.")
         }
@@ -252,6 +253,17 @@ public enum ScriptGenerator {
         let isLocal = ["localhost", "127.0.0.1", "::1"].contains(host)
         guard scheme == "https" || (scheme == "http" && isLocal) else { return nil }
         return URL(string: base + path)
+    }
+
+    /// Alibaba's subscription plans (Coding Plan, Token Plan) issue keys that
+    /// start with `sk-sp-`. They only work with the plan's own address and,
+    /// under the plan's terms, only in the coding tools it supports, so the
+    /// Model Studio presets reject them with "Incorrect API key". Say so
+    /// before sending anything.
+    static func planKeyProblem(settings: AISettings, apiKey: String) -> ScriptGenerationError? {
+        guard settings.provider == .alibabaSingapore || settings.provider == .alibabaBeijing,
+              apiKey.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("sk-sp-") else { return nil }
+        return ScriptGenerationError("This key is from an Alibaba Coding Plan or Token Plan subscription (it starts with sk-sp-). Those keys only work in the coding tools the plan supports, not in other apps. Create a pay-as-you-go API key in Model Studio (Get an API key… in Settings → AI) and paste it here.")
     }
 
     /// The service's own error for a non-2xx answer, in plain language.
@@ -335,6 +347,7 @@ extension ScriptGenerator {
         guard !key.isEmpty else {
             throw ScriptGenerationError("Add your \(settings.provider.label) API key first, so Forel can ask the service which models you can use.")
         }
+        if let problem = planKeyProblem(settings: settings, apiKey: key) { throw problem }
         guard let url = modelsEndpoint(settings.baseURL) else {
             throw ScriptGenerationError("The service address isn't a valid https:// URL.")
         }
