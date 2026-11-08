@@ -231,31 +231,48 @@ public enum ScriptGenerator {
     /// `<base>/chat/completions`. Only https, except for a server on this
     /// Mac, so the API key never travels in the clear.
     public static func endpoint(_ baseURL: String) -> URL? {
+        serviceURL(baseURL, path: "/chat/completions")
+    }
+
+    /// `<base>/models`, the list of models the service offers, under the
+    /// same https rule as `endpoint(_:)`.
+    public static func modelsEndpoint(_ baseURL: String) -> URL? {
+        serviceURL(baseURL, path: "/models")
+    }
+
+    private static func serviceURL(_ baseURL: String, path: String) -> URL? {
         var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         while base.hasSuffix("/") { base.removeLast() }
-        if base.hasSuffix("/chat/completions") { base.removeLast("/chat/completions".count) }
+        for suffix in ["/chat/completions", "/models"] where base.hasSuffix(suffix) {
+            base.removeLast(suffix.count)
+        }
         guard let components = URLComponents(string: base),
               let scheme = components.scheme?.lowercased(),
               let host = components.host, !host.isEmpty else { return nil }
         let isLocal = ["localhost", "127.0.0.1", "::1"].contains(host)
         guard scheme == "https" || (scheme == "http" && isLocal) else { return nil }
-        return URL(string: base + "/chat/completions")
+        return URL(string: base + path)
+    }
+
+    /// The service's own error for a non-2xx answer, in plain language.
+    static func serviceError(statusCode: Int, json: [String: Any]?) -> ScriptGenerationError {
+        let serviceMessage = ((json?["error"] as? [String: Any])?["message"] as? String)
+            ?? (json?["message"] as? String)
+        switch statusCode {
+        case 401, 403:
+            return ScriptGenerationError("The service refused the API key\(serviceMessage.map { ": \($0)" } ?? "."). Check the key and the service address in Settings → AI.")
+        case 429:
+            return ScriptGenerationError("The service is rate-limiting requests or the account has no credit left\(serviceMessage.map { ": \($0)" } ?? ".")")
+        default:
+            return ScriptGenerationError("The service answered with error \(statusCode)\(serviceMessage.map { ": \($0)" } ?? ".")")
+        }
     }
 
     /// The script in a chat-completions answer, or the service's own error.
     public static func script(fromResponse data: Data, statusCode: Int) throws -> String {
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         guard (200..<300).contains(statusCode) else {
-            let serviceMessage = ((json?["error"] as? [String: Any])?["message"] as? String)
-                ?? (json?["message"] as? String)
-            switch statusCode {
-            case 401, 403:
-                throw ScriptGenerationError("The service refused the API key\(serviceMessage.map { ": \($0)" } ?? "."). Check the key and the service address in Settings → AI.")
-            case 429:
-                throw ScriptGenerationError("The service is rate-limiting requests or the account has no credit left\(serviceMessage.map { ": \($0)" } ?? ".")")
-            default:
-                throw ScriptGenerationError("The service answered with error \(statusCode)\(serviceMessage.map { ": \($0)" } ?? ".")")
-            }
+            throw serviceError(statusCode: statusCode, json: json)
         }
         guard let choices = json?["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],
@@ -301,5 +318,72 @@ public enum ScriptGenerator {
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         return try script(fromResponse: data, statusCode: status)
+    }
+}
+
+// MARK: - Model list
+
+extension ScriptGenerator {
+    /// Words in a model ID that mark it as something other than a chat
+    /// model (embeddings, speech, images), which can't write scripts.
+    static let nonChatModelMarkers = ["embed", "rerank", "tts", "asr", "whisper", "dall-e", "wanx", "moderation"]
+
+    /// The `GET <base>/models` request, with the same key checks as
+    /// generating a script.
+    public static func modelsRequest(settings: AISettings, apiKey: String) throws -> URLRequest {
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else {
+            throw ScriptGenerationError("Add your \(settings.provider.label) API key first, so Forel can ask the service which models you can use.")
+        }
+        guard let url = modelsEndpoint(settings.baseURL) else {
+            throw ScriptGenerationError("The service address isn't a valid https:// URL.")
+        }
+        var request = URLRequest(url: url, timeoutInterval: 30)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        return request
+    }
+
+    /// The chat model IDs in a `/models` answer (`{"data": [{"id": …}]}`),
+    /// sorted and without duplicates, or the service's own error.
+    public static func models(fromResponse data: Data, statusCode: Int) throws -> [String] {
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard (200..<300).contains(statusCode) else {
+            if statusCode == 404 {
+                throw ScriptGenerationError("This service doesn't list its models. Type the model ID instead.")
+            }
+            throw serviceError(statusCode: statusCode, json: json)
+        }
+        guard let entries = (json?["data"] as? [[String: Any]]) ?? (json?["models"] as? [[String: Any]]) else {
+            throw ScriptGenerationError("The service's answer didn't contain a list of models. Type the model ID instead.")
+        }
+        let ids = entries.compactMap { ($0["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { id in
+                let lower = id.lowercased()
+                return !id.isEmpty && !nonChatModelMarkers.contains { lower.contains($0) }
+            }
+        let unique = Array(Set(ids)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        guard !unique.isEmpty else {
+            throw ScriptGenerationError("The service didn't list any chat models for this key. Type the model ID instead.")
+        }
+        return unique
+    }
+
+    /// Asks the service which models the key can use.
+    public static func listModels(
+        settings: AISettings,
+        apiKey: String,
+        session: URLSession = .shared
+    ) async throws -> [String] {
+        let request = try modelsRequest(settings: settings, apiKey: apiKey)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let error as URLError {
+            throw ScriptGenerationError("Couldn't reach \(settings.provider.label): \(error.localizedDescription)")
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        return try models(fromResponse: data, statusCode: status)
     }
 }
