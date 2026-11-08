@@ -49,6 +49,8 @@ final class AppModel: ObservableObject {
     @Published var history: [HistoryEntry] = []
     @Published var historyTotalCount: Int = 0
     @Published var historyFolderFilterId: String?
+    /// Words the Action History list is filtered by (rule, path, action, message).
+    @Published private(set) var historySearch = ""
     @Published private(set) var hasMoreHistory = false
     @Published private(set) var isLoadingHistory = false
     @Published var paused: Bool = false
@@ -140,6 +142,11 @@ final class AppModel: ObservableObject {
         self.coordinator.onHistoryRecorded = { [weak self] in
             Task { @MainActor in
                 self?.bumpWatcherHistoryRevision()
+            }
+        }
+        self.coordinator.eventLog.setChangeHandler { [weak self] in
+            Task { @MainActor in
+                self?.bumpEventLogRevision()
             }
         }
         // Default to paused (watching off) on a fresh install — a brand-new
@@ -295,6 +302,22 @@ final class AppModel: ObservableObject {
             MainActor.assumeIsolated {
                 self?.volumeDidMount(atPath: url.path)
             }
+        }
+    }
+
+    /// Bumped (at most a few times a second) when the event log changes, so
+    /// the Event Log screen refreshes without redrawing on every file event.
+    @Published private(set) var eventLogRevision = 0
+    private var eventLogRevisionTask: Task<Void, Never>?
+
+    var eventLog: EventLog { coordinator.eventLog }
+
+    private func bumpEventLogRevision() {
+        guard eventLogRevisionTask == nil else { return }
+        eventLogRevisionTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            self?.eventLogRevisionTask = nil
+            self?.eventLogRevision += 1
         }
     }
 
@@ -584,6 +607,12 @@ final class AppModel: ObservableObject {
         loadHistoryPage(reset: false)
     }
 
+    func setHistorySearch(_ text: String) {
+        guard historySearch != text else { return }
+        historySearch = text
+        reloadHistory()
+    }
+
     func setHistoryFolderFilter(_ folderId: String?) {
         guard historyFolderFilterId != folderId else { return }
         historyFolderFilterId = folderId
@@ -596,14 +625,15 @@ final class AppModel: ObservableObject {
         defer { isLoadingHistory = false }
 
         let directoryPath = historyFilterDirectoryPath
+        let search = historySearch
         if reset {
             history = []
-            historyTotalCount = db.withLock { db in (try? db.countHistory(directoryPath: directoryPath)) ?? 0 }
+            historyTotalCount = db.withLock { db in (try? db.countHistory(directoryPath: directoryPath, matching: search)) ?? 0 }
         }
 
         let offset = reset ? 0 : history.count
         let limit = historyPageSize
-        let page = db.withLock { db in (try? db.listHistory(limit: limit, offset: offset, directoryPath: directoryPath)) ?? [] }
+        let page = db.withLock { db in (try? db.listHistory(limit: limit, offset: offset, directoryPath: directoryPath, matching: search)) ?? [] }
         history = reset ? page : history + page
         hasMoreHistory = history.count < historyTotalCount
     }
@@ -897,6 +927,13 @@ final class AppModel: ObservableObject {
             }
             reloadHistory()
             let summary = RunSummary.message(for: allHistory)
+            eventLog.append(LoggedEvent(
+                kind: .runNow,
+                path: folder.path,
+                message: summary,
+                ruleNames: Array(Set(allHistory.map(\.ruleName))).sorted(),
+                isError: allHistory.contains { $0.status == .failed }
+            ))
             showRunNowMessage(RunNowMessage(
                 text: summary,
                 hasFailures: allHistory.contains { $0.status == .failed },
@@ -1076,6 +1113,44 @@ final class AppModel: ObservableObject {
 
     /// Opens Activity. When coming from a folder's run result, a filter set
     /// to another folder would hide that run, so it is cleared.
+    /// Every rule of every watched folder, in sidebar then rule order, for
+    /// searching the whole library (the rule palette).
+    func allRules() -> [(folder: WatchedFolder, rule: Rule)] {
+        let folders = self.folders
+        return db.withLock { db in
+            folders.flatMap { folder in
+                ((try? db.listRules(folderId: folder.id)) ?? []).map { (folder: folder, rule: $0) }
+            }
+        }
+    }
+
+    /// Shows `ruleId` of `folderId` in the rules screen, expanded or selected.
+    @Published var revealedRuleId: String?
+
+    func reveal(ruleId: String, inFolder folderId: String) {
+        if selectedFolderId != folderId {
+            selectedFolderId = folderId
+            reloadRules()
+        }
+        detailRoute = .rules
+        revealedRuleId = ruleId
+    }
+
+    /// Set to open the rule editor on a new rule (from the rule palette).
+    @Published var pendingNewRule: Rule?
+
+    func startNewRule(named name: String, inFolder folderId: String) {
+        if selectedFolderId != folderId {
+            selectedFolderId = folderId
+            reloadRules()
+        }
+        detailRoute = .rules
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        pendingNewRule = Rule(folderId: folderId, name: trimmed.isEmpty ? "New Rule" : trimmed)
+    }
+
+    @Published var isShowingRulePalette = false
+
     func showActivity(forFolder folderId: String? = nil) {
         if let folderId, let historyFolderFilterId, historyFolderFilterId != folderId {
             self.historyFolderFilterId = nil
@@ -1126,6 +1201,14 @@ final class AppModel: ObservableObject {
                     reachedMatchLimit: reachedMatchLimit
                 )
             }.value
+            if let result = previewResult {
+                let matched = result.reachedMatchLimit ? "\(result.matches.count)+" : "\(result.matches.count)"
+                eventLog.append(LoggedEvent(
+                    kind: .dryRun,
+                    path: folder.path,
+                    message: "\(result.filesScanned) items scanned, \(matched) would be changed"
+                ))
+            }
         }
     }
 
@@ -1283,6 +1366,7 @@ final class AppModel: ObservableObject {
             try? db.setSetting("paused", isPaused ? "1" : "0")
             return (try? db.listFolders()) ?? []
         }
+        eventLog.append(LoggedEvent(kind: .watching, message: isPaused ? "Watching paused" : "Watching resumed"))
         if isPaused {
             coordinator.removeAll()
             return

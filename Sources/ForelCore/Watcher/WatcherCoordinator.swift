@@ -54,6 +54,8 @@ public final class WatcherCoordinator: @unchecked Sendable {
     public var onVolumeUnavailable: (@Sendable (VolumeUnavailableEvent) -> Void)?
     /// Called whenever an automatic run records history, failures included.
     public var onHistoryRecorded: (@Sendable () -> Void)?
+    /// What the watcher noticed and what the rules made of it, this session.
+    public let eventLog: EventLog
     /// Files to run the rules on again, by the /Volumes name of the disk or
     /// share they wait for. Only touched on `processingQueue`; not persisted.
     var waitingForVolume: [String: Set<String>] = [:]
@@ -73,8 +75,9 @@ public final class WatcherCoordinator: @unchecked Sendable {
         var hasDeferredDescendants = false
     }
 
-    public init(db: Database, settleInterval: TimeInterval = 1.0) {
+    public init(db: Database, settleInterval: TimeInterval = 1.0, eventLog: EventLog = EventLog()) {
         self.db = db
+        self.eventLog = eventLog
         self.settleInterval = settleInterval
         var watcherRef: FileWatcher!
         watcherRef = FileWatcher(onEvent: { _ in })
@@ -123,8 +126,22 @@ public final class WatcherCoordinator: @unchecked Sendable {
     }
 
     func enqueue(event: FileWatcherEvent) {
+        logReceived(event)
         processingQueue.async { [weak self] in
             self?.handle(event: event, waitsForSettledFiles: true)
+        }
+    }
+
+    private func logReceived(_ event: FileWatcherEvent) {
+        switch event {
+        case .pathArrived(let path):
+            guard !SystemFileFilter.isExcluded((path as NSString).lastPathComponent) else { return }
+            eventLog.append(LoggedEvent(kind: .fileArrived, path: path, message: "Seen by the watcher"))
+        case .pathRemoved(let path):
+            guard !SystemFileFilter.isExcluded((path as NSString).lastPathComponent) else { return }
+            eventLog.append(LoggedEvent(kind: .fileRemoved, path: path, message: "Removed or moved away"))
+        case .rescanSubtree(let path):
+            eventLog.append(LoggedEvent(kind: .folderRescanned, path: path, message: "macOS asked for this folder to be checked again"))
         }
     }
 
@@ -634,6 +651,7 @@ public final class WatcherCoordinator: @unchecked Sendable {
 
     /// Persists what a run on `path` did and tells whoever listens.
     private func record(matched: [String], history: [HistoryEntry], path: String, rules: [Rule]) {
+        eventLog.append(EventLog.outcome(path: path, matched: matched, history: history))
         for ruleName in matched {
             onRuleMatched?(ruleName, path)
         }

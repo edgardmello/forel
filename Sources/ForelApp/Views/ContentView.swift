@@ -49,6 +49,10 @@ struct ContentView: View {
         } message: { pending in
             Text(sharedImportMessage(pending))
         }
+        .sheet(isPresented: $model.isShowingRulePalette) {
+            RulePaletteView()
+                .environmentObject(model)
+        }
         .sheet(isPresented: $model.showHazelImportAssistant) {
             HazelImportAssistantView()
                 .environmentObject(model)

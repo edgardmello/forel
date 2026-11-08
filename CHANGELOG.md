@@ -6,6 +6,7 @@ All notable changes to Forel are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Changed
+- Clear History now asks for confirmation and says that cleared actions can no longer be undone.
 - Forel now appears in the Dock whenever one of its windows is open and leaves the Dock, keeping only the menu bar icon, when you close the window. Reopening it from the menu bar, Finder or Spotlight brings the Dock icon back. The "Show Dock icon" setting was removed.
 
 ### Fixed
@@ -23,6 +24,11 @@ All notable changes to Forel are documented here. Format loosely follows
 - New "Rule last ran" condition throttles a rule: "is older than 10 minutes" makes it act at most once every 10 minutes, across all files. Relative durations now also accept minutes and hours.
 - Generate Code (Settings → AI, off by default) writes a shell script, AppleScript or JavaScript from a plain-language description using DeepSeek, Alibaba Model Studio, or another OpenAI-compatible service with your own API key. It runs only when you press the button, sends your description and the names of the command-line tools installed on your Mac (never file names or contents), and shows the script for review before it replaces yours. The API key is stored in your Keychain.
 - Settings → Permissions shows whether Forel has Full Disk Access and links straight to it. With it on, macOS stops asking separately for Desktop, Documents, Downloads and each external or network drive.
+- Rules can be shown as a table with an inspector beside it (toggle next to the filter): select several rows to enable, disable, duplicate or delete them together, double-click to edit. The detailed list stays available.
+- Find Rule (⌘K or the magnifying glass) searches every rule in every watched folder by name, condition or action, opens the one you pick, or starts a new rule named after what you typed in the folder you choose.
+- The rule filter now also finds rules by their conditions and actions and their settings (e.g. "pdf" or "Documents"), and shows what matched under the rule's name.
+- Activity has a new Event Log next to Action History: every file the watcher saw this session and what the rules made of it, including files no rule matched, Run Now and Dry Run results, and disks that weren't connected. It can be filtered by text and by kind and is kept in memory only.
+- Action History can be filtered by rule, file, action or message.
 - `./build.sh signing-setup` creates a free local signing certificate once; builds and DMGs you make yourself are then signed with it, so macOS keeps Forel's folder and Full Disk Access grants across restarts, rebuilds and reinstalls instead of asking again.
 - Rules that depend on time ("is older than", "is within the last", "Date last matched") are now re-checked on a schedule (every 30 minutes by default, adjustable in Settings → Automation) and when the Mac wakes, so a file that turns 30 days old is handled without anything else touching it. A rule never repeats on a file it already handled unless the file changed.
 - New "Date last matched" and "Times matched" conditions remember, per rule, when and how often it matched each file, even after a rename — "Times matched is 0" runs a rule only the first time.

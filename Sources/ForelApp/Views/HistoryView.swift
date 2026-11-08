@@ -20,6 +20,17 @@ import ForelCore
 
 struct HistoryView: View {
     @EnvironmentObject var model: AppModel
+    @AppStorage("activityTab") private var tabRaw = ActivityTab.actionHistory.rawValue
+    @State private var historySearchText = ""
+    @State private var isConfirmingClearHistory = false
+
+    enum ActivityTab: String, CaseIterable, Identifiable {
+        case eventLog, actionHistory
+        var id: String { rawValue }
+        var label: String { self == .eventLog ? "Event Log" : "Action History" }
+    }
+
+    private var tab: ActivityTab { ActivityTab(rawValue: tabRaw) ?? .actionHistory }
 
     private var batches: [(id: String, entries: [HistoryEntry])] {
         let grouped = Dictionary(grouping: model.history, by: \.batchId)
@@ -48,7 +59,7 @@ struct HistoryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ViewHeader(title: "Activity", subtitle: "\(model.historyTotalCount) recorded action\(model.historyTotalCount == 1 ? "" : "s")", systemImage: "clock.arrow.circlepath") {
+            ViewHeader(title: "Activity", subtitle: subtitle, systemImage: "clock.arrow.circlepath") {
                 Button {
                     model.detailRoute = .rules
                 } label: {
@@ -58,7 +69,53 @@ struct HistoryView: View {
                 .help("Back to rules")
             }
 
+            Picker("View", selection: $tabRaw) {
+                ForEach(ActivityTab.allCases) { Text($0.label).tag($0.rawValue) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 280)
+
+            if tab == .eventLog {
+                EventLogView()
+            } else {
+                actionHistory
+            }
+        }
+        .padding(16)
+        .frame(minWidth: 460)
+        .background(ForelTheme.background)
+        .onAppear {
+            historySearchText = model.historySearch
+            model.reloadHistory()
+        }
+        .confirmationDialog("Clear Action History?", isPresented: $isConfirmingClearHistory, titleVisibility: .visible) {
+            Button("Clear \(model.historyTotalCount) Recorded Action\(model.historyTotalCount == 1 ? "" : "s")", role: .destructive) {
+                try? model.db.clearHistory()
+                model.reloadHistory()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every recorded action in every folder is removed, and none of them can be undone from Forel afterwards. Your files are not changed.")
+        }
+    }
+
+    private var subtitle: String {
+        if tab == .eventLog { return "What the watcher saw and what your rules did, since Forel opened" }
+        let count = model.historyTotalCount
+        let noun = "recorded action\(count == 1 ? "" : "s")"
+        return model.historySearch.isEmpty ? "\(count) \(noun)" : "\(count) \(noun) match “\(model.historySearch)”"
+    }
+
+    @ViewBuilder
+    private var actionHistory: some View {
             HStack(spacing: 8) {
+                GlassField(placeholder: "Filter by rule, file or action", text: $historySearchText)
+                    .frame(maxWidth: 220)
+                    .onChange(of: historySearchText) { text in
+                        model.setHistorySearch(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+
                 Image(systemName: "folder")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(ForelTheme.secondaryText)
@@ -127,21 +184,15 @@ struct HistoryView: View {
             }
             .scrollIndicators(.never)
 
-            if !batches.isEmpty {
+            if !batches.isEmpty, model.historySearch.isEmpty {
                 HStack {
                     Spacer()
-                    Button("Clear History", role: .destructive) {
-                        try? model.db.clearHistory()
-                        model.reloadHistory()
+                    Button("Clear History…", role: .destructive) {
+                        isConfirmingClearHistory = true
                     }
                     .buttonStyle(SecondaryButtonStyle(role: .destructive))
                 }
             }
-        }
-        .padding(16)
-        .frame(minWidth: 460)
-        .background(ForelTheme.background)
-        .onAppear { model.reloadHistory() }
     }
 
     private var emptyState: some View {
@@ -149,7 +200,7 @@ struct HistoryView: View {
             Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: 28))
                 .foregroundStyle(ForelTheme.secondaryText)
-            Text("No activity yet")
+            Text(model.historySearch.isEmpty ? "No activity yet" : "No actions match the filter")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(ForelTheme.primaryText)
             Text("Actions performed by your rules will appear here.")

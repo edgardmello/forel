@@ -26,6 +26,15 @@ struct RuleListView: View {
     @State private var isSelecting = false
     @State private var selectedRuleIds: Set<String> = []
     @State private var isConfirmingBulkDelete = false
+    @AppStorage("ruleViewMode") private var viewModeRaw = RuleViewMode.list.rawValue
+    @AppStorage("ruleTableShowsInspector") private var showsInspector = true
+    @State private var tableSelection: Set<String> = []
+
+    enum RuleViewMode: String {
+        case list, table
+    }
+
+    private var viewMode: RuleViewMode { RuleViewMode(rawValue: viewModeRaw) ?? .list }
 
     private var selectedFolder: WatchedFolder? {
         model.folders.first { $0.id == model.selectedFolderId }
@@ -35,10 +44,22 @@ struct RuleListView: View {
         model.folders.filter { $0.id != model.selectedFolderId }
     }
 
+    /// Filtering looks inside conditions and actions too, not only names.
     private var visibleRules: [Rule] {
+        RuleSearch.filter(model.rules, query: searchText)
+    }
+
+    /// For rules found by a condition or action rather than their name,
+    /// what matched — so it's clear why the rule is in the filtered list.
+    private var matchHints: [String: String] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return model.rules }
-        return model.rules.filter { $0.name.localizedCaseInsensitiveContains(query) }
+        guard !query.isEmpty else { return [:] }
+        var hints: [String: String] = [:]
+        for rule in model.rules {
+            guard let match = RuleSearch.match(rule, query: query), match.field != .name else { continue }
+            hints[rule.id] = "\(match.field == .condition ? "If" : "Then") \(match.text)"
+        }
+        return hints
     }
 
     /// Order numbers stay stable (position in the full list) while filtering.
@@ -91,9 +112,38 @@ struct RuleListView: View {
                     .foregroundStyle(ForelTheme.secondaryText)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 24)
+            } else if viewMode == .table {
+                RuleTableView(
+                    rules: visibleRules,
+                    orderById: orderById,
+                    matchHints: matchHints,
+                    selection: $tableSelection,
+                    showsInspector: $showsInspector,
+                    onEdit: { editingRule = $0 },
+                    onDelete: { targets in
+                        selectedRuleIds = Set(targets.map(\.id))
+                        isConfirmingBulkDelete = true
+                    }
+                )
             } else {
                 rulesList
             }
+        }
+        .onReceive(model.$pendingNewRule) { rule in
+            guard let rule else { return }
+            model.pendingNewRule = nil
+            editingRule = rule
+        }
+        .onReceive(model.$revealedRuleId) { ruleId in
+            guard let ruleId else { return }
+            model.revealedRuleId = nil
+            reveal(ruleId)
+        }
+        .onChange(of: model.selectedFolderId) { _ in
+            tableSelection.removeAll()
+        }
+        .onChange(of: viewModeRaw) { _ in
+            exitSelection()
         }
         .animation(.easeInOut(duration: 0.25), value: model.runNowMessageForSelectedFolder)
         .confirmationDialog(
@@ -104,6 +154,7 @@ struct RuleListView: View {
             Button("Delete \(selectedRuleIds.count) Rule\(selectedRuleIds.count == 1 ? "" : "s")", role: .destructive) {
                 let doomed = model.rules.filter { selectedRuleIds.contains($0.id) }
                 model.deleteRules(doomed)
+                tableSelection.subtract(selectedRuleIds)
                 exitSelection()
             }
             Button("Cancel", role: .cancel) {}
@@ -115,22 +166,54 @@ struct RuleListView: View {
         .background(ForelTheme.background)
     }
 
+    /// The rule to scroll to in the list once it's on screen.
+    @State private var scrollTarget: String?
+
     private var rulesList: some View {
-        List {
-            ForEach(Array(visibleRules.enumerated()), id: \.element.id) { index, rule in
-                ruleRow(rule, fallbackOrder: index + 1)
+        ScrollViewReader { proxy in
+            List {
+                let hints = matchHints
+                ForEach(Array(visibleRules.enumerated()), id: \.element.id) { index, rule in
+                    ruleRow(rule, fallbackOrder: index + 1, matchHint: hints[rule.id])
+                        .id(rule.id)
+                }
+                .onMove(perform: moveRules)
             }
-            .onMove(perform: moveRules)
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .scrollIndicators(.never)
+            .onChange(of: scrollTarget) { target in
+                guard let target else { return }
+                withAnimation { proxy.scrollTo(target, anchor: .top) }
+                scrollTarget = nil
+            }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .scrollIndicators(.never)
     }
 
-    private func ruleRow(_ rule: Rule, fallbackOrder: Int) -> some View {
+    /// Brings a rule picked in the rule palette into view: selected in the
+    /// table, expanded and scrolled to in the list.
+    private func reveal(_ ruleId: String) {
+        guard let rule = model.rules.first(where: { $0.id == ruleId }) else { return }
+        if !visibleRules.contains(where: { $0.id == ruleId }) {
+            searchText = ""
+        }
+        switch viewMode {
+        case .table:
+            tableSelection = [ruleId]
+            showsInspector = true
+        case .list:
+            if !model.isRuleExpanded(rule) {
+                model.toggleRuleExpanded(rule)
+            }
+            DispatchQueue.main.async { scrollTarget = ruleId }
+        }
+    }
+
+    private func ruleRow(_ rule: Rule, fallbackOrder: Int, matchHint: String?) -> some View {
         RuleCard(
             rule: rule,
             order: orderById[rule.id] ?? fallbackOrder,
+            matchHint: matchHint,
             isExpanded: model.isRuleExpanded(rule),
             isSelecting: isSelecting,
             isSelected: selectedRuleIds.contains(rule.id),
@@ -175,17 +258,33 @@ struct RuleListView: View {
             if isSelecting {
                 bulkSelectionBar
             } else {
-                GlassField(placeholder: "Filter rules", text: $searchText)
-                    .frame(maxWidth: 190)
-
-                Button {
-                    model.collapseAllRules()
-                } label: {
-                    Image(systemName: "rectangle.compress.vertical")
+                Picker("View", selection: $viewModeRaw) {
+                    Image(systemName: "list.bullet.rectangle")
+                        .help("Detailed list")
+                        .tag(RuleViewMode.list.rawValue)
+                    Image(systemName: "tablecells")
+                        .help("Table with inspector")
+                        .tag(RuleViewMode.table.rawValue)
                 }
-                .buttonStyle(IconButtonStyle())
-                .help("Collapse all rules")
-                .disabled(!model.rules.contains { model.isRuleExpanded($0) })
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .help("Show rules as a detailed list or as a table")
+
+                GlassField(placeholder: "Filter by name, condition or action", text: $searchText)
+                    .frame(maxWidth: 230)
+                    .help("Finds rules by their name, any condition (\"extension pdf\") or any action and its settings (\"Documents\")")
+
+                if viewMode == .list {
+                    Button {
+                        model.collapseAllRules()
+                    } label: {
+                        Image(systemName: "rectangle.compress.vertical")
+                    }
+                    .buttonStyle(IconButtonStyle())
+                    .help("Collapse all rules")
+                    .disabled(!model.rules.contains { model.isRuleExpanded($0) })
+                }
 
                 Spacer()
 
@@ -205,12 +304,14 @@ struct RuleListView: View {
                 .buttonStyle(SecondaryButtonStyle())
                 .disabled(!model.rules.contains { $0.enabled })
 
-                Button {
-                    isSelecting = true
-                } label: {
-                    Label("Select", systemImage: "checkmark.circlebadge")
+                if viewMode == .list {
+                    Button {
+                        isSelecting = true
+                    } label: {
+                        Label("Select", systemImage: "checkmark.circlebadge")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
                 }
-                .buttonStyle(SecondaryButtonStyle())
             }
         }
         .padding(.top, -6)
@@ -352,9 +453,17 @@ struct RuleListView: View {
             title: selectedFolder.map { ($0.path as NSString).lastPathComponent } ?? "Rules",
             subtitle: model.selectedFolderId == nil
                 ? "Select a folder to manage its rules"
-                : "\(model.rules.count) rule\(model.rules.count == 1 ? "" : "s") · drag to reorder",
+                : "\(model.rules.count) rule\(model.rules.count == 1 ? "" : "s")\(viewMode == .list ? " · drag to reorder" : "")",
             systemImage: selectedFolder == nil ? nil : "folder.fill"
         ) {
+            Button {
+                model.isShowingRulePalette = true
+            } label: {
+                Image(systemName: "magnifyingglass")
+            }
+            .buttonStyle(IconButtonStyle())
+            .help("Find a rule in any folder, or start a new one (⌘K)")
+
             Button {
                 model.showActivity()
             } label: {
@@ -521,6 +630,7 @@ private struct RuleCard: View {
     @EnvironmentObject var model: AppModel
     let rule: Rule
     let order: Int
+    var matchHint: String? = nil
     let isExpanded: Bool
     let isSelecting: Bool
     let isSelected: Bool
@@ -582,6 +692,13 @@ private struct RuleCard: View {
                         Text(rule.name)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(ForelTheme.primaryText)
+                        if let matchHint {
+                            Text(matchHint)
+                                .font(.system(size: 10))
+                                .foregroundStyle(ForelTheme.accent)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
                         HStack(spacing: 6) {
                             metaPill(icon: "line.3.horizontal.decrease.circle", text: "\(rule.conditions.count)")
                             metaPill(icon: "bolt.fill", text: "\(rule.actions.count)")
@@ -648,7 +765,7 @@ private struct RuleCard: View {
     }
 }
 
-private struct RuleDetails: View {
+struct RuleDetails: View {
     let rule: Rule
 
     var body: some View {
