@@ -78,6 +78,12 @@ public enum ConditionValueKind: Sendable, Equatable {
     /// Where a `duplicate` condition looks for an identical file
     /// (`DuplicateScope`).
     case duplicateScope
+    /// "HH:mm", picked with a time picker.
+    case timeOfDay
+    /// A `WeekdayValue`.
+    case weekday
+    /// A relative duration in minutes, hours or days ("10 minutes").
+    case shortDuration
 }
 
 // MARK: - Condition kinds
@@ -111,6 +117,9 @@ public extension ConditionKind {
         case .timesMatched: return "Times matched"
         case .duplicate: return "Duplicate"
         case .aiClassification: return "Document (AI)"
+        case .timeOfDay: return "Time of day"
+        case .dayOfWeek: return "Day of the week"
+        case .ruleLastRan: return "Rule last ran"
         }
     }
 
@@ -130,6 +139,12 @@ public extension ConditionKind {
             return [.is, .isNot, .contains, .doesNotContain, .startsWith, .endsWith, .matchesRegex]
         case .downloadedWithApp:
             return [.is]
+        case .timeOfDay:
+            return [.after, .before]
+        case .dayOfWeek:
+            return [.is, .isNot]
+        case .ruleLastRan:
+            return [.olderThan, .withinLast]
         }
     }
 
@@ -152,6 +167,9 @@ public extension ConditionKind {
         case .name, .extension_, .tags, .contents, .finderComment, .filePath,
              .downloadedFromWebsite, .rawWhereFromMetadata: return .text
         case .downloadedWithApp: return .appPicker
+        case .timeOfDay: return .timeOfDay
+        case .dayOfWeek: return .weekday
+        case .ruleLastRan: return .shortDuration
         }
     }
 
@@ -183,6 +201,9 @@ public extension ConditionKind {
         case .timesMatched: return "number"
         case .duplicate: return "plus.square.on.square"
         case .aiClassification: return "sparkles"
+        case .timeOfDay: return "clock"
+        case .dayOfWeek: return "calendar"
+        case .ruleLastRan: return "timer"
         }
     }
 
@@ -203,6 +224,12 @@ public extension ConditionKind {
             return "How many times this rule matched the file before. \"Is 0\" means the first time only."
         case .duplicate:
             return "Matches when another file with exactly the same contents is already there. The oldest copy is never a duplicate, so it is the one that stays."
+        case .timeOfDay:
+            return "The time on this Mac when the rule runs, not a date of the file. Combine \"after\" and \"before\" for a window; rules are re-checked when it opens."
+        case .dayOfWeek:
+            return "The day when the rule runs, not a date of the file. Rules are re-checked at midnight."
+        case .ruleLastRan:
+            return "When this rule last ran on any file. \"Is older than 10 minutes\" makes the rule act at most once every 10 minutes."
         case .aiClassification:
             return "Apple Intelligence reads the file's text on this Mac and decides whether it fits your description, e.g. \"a bank slip (boleto)\". Needs macOS 26 with Apple Intelligence turned on."
         default:
@@ -541,7 +568,10 @@ public enum RuleSchema {
             .lastOpened, .imageWidth, .imageHeight, .photoDateTaken, .pdfPageCount, .duplicate,
         ]),
         ConditionKindGroup(title: "Rule history", kinds: [
-            .dateLastMatched, .timesMatched,
+            .dateLastMatched, .timesMatched, .ruleLastRan,
+        ]),
+        ConditionKindGroup(title: "Schedule", kinds: [
+            .timeOfDay, .dayOfWeek,
         ]),
         ConditionKindGroup(title: "Metadata", kinds: [
             .downloadedFromWebsite, .downloadedWithApp, .spotlightMetadata,

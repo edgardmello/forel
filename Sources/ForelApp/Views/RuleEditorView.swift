@@ -634,6 +634,16 @@ private struct ConditionRow: View {
                 options: DuplicateScope.allCases.map(\.rawValue),
                 label: { value in DuplicateScope(rawValue: value)?.label ?? value }
             )
+        case .timeOfDay:
+            TimeOfDayValueEditor(value: $condition.value)
+        case .weekday:
+            StringSelectMenu(
+                selection: $condition.value,
+                options: WeekdayValue.allCases.map(\.rawValue),
+                label: { value in WeekdayValue(rawValue: value)?.label ?? value }
+            )
+        case .shortDuration:
+            RelativeDateValueEditor(value: $condition.value, units: ["minutes", "hours", "days"], defaultValue: "10 minutes")
         }
     }
 
@@ -693,6 +703,9 @@ private struct ConditionRow: View {
         case .number: return "0"
         case .spotlightMetadata: return SpotlightMetadataCondition.make(key: "kMDItemAuthors", value: "")
         case .duplicateScope: return DuplicateScope.sameFolder.rawValue
+        case .timeOfDay: return operator_ == .before ? "18:00" : "08:00"
+        case .weekday: return WeekdayValue.weekdays.rawValue
+        case .shortDuration: return "10 minutes"
         case .absoluteDate:
             return operator_.usesRelativeDateValue ? "7 days" : DateValueFormatter.string(from: Date())
         default: return ""
@@ -893,12 +906,14 @@ private struct AbsoluteDateValueEditor: View {
 
 private struct RelativeDateValueEditor: View {
     @Binding var value: String
+    var units = ["days", "weeks", "months", "years"]
+    var defaultValue = "7 days"
 
     var body: some View {
         HStack(spacing: 8) {
-            GlassField(placeholder: "7", text: numberBinding)
+            GlassField(placeholder: parts.number, text: numberBinding)
                 .frame(width: 72)
-            StringSelectMenu(selection: unitBinding, options: ["days", "weeks", "months", "years"])
+            StringSelectMenu(selection: unitBinding, options: units)
             .frame(width: 120)
             Spacer(minLength: 0)
         }
@@ -919,10 +934,39 @@ private struct RelativeDateValueEditor: View {
     }
 
     private var parts: (number: String, unit: String) {
+        let defaults = defaultValue.split(separator: " ", maxSplits: 1).map(String.init)
         let pieces = value.split(separator: " ", maxSplits: 1).map(String.init)
         let number = pieces.first?.filter(\.isNumber)
-        let unit = pieces.count > 1 ? pieces[1] : "days"
-        return ((number?.isEmpty == false ? number! : "7"), ["days", "weeks", "months", "years"].contains(unit) ? unit : "days")
+        let unit = pieces.count > 1 ? pieces[1] : (defaults.last ?? units[0])
+        return ((number?.isEmpty == false ? number! : (defaults.first ?? "7")), units.contains(unit) ? unit : units[0])
+    }
+}
+
+/// "HH:mm" with the system time picker, in the Mac's own clock format.
+private struct TimeOfDayValueEditor: View {
+    @Binding var value: String
+
+    var body: some View {
+        HStack {
+            DatePicker("Time", selection: dateBinding, displayedComponents: .hourAndMinute)
+                .labelsHidden()
+                .datePickerStyle(.field)
+                .fixedSize()
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var dateBinding: Binding<Date> {
+        Binding(
+            get: {
+                let minutes = ScheduleConditions.minutes(value) ?? 8 * 60
+                return Calendar.current.date(byAdding: .minute, value: minutes, to: Calendar.current.startOfDay(for: Date())) ?? Date()
+            },
+            set: { date in
+                let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+                value = ScheduleConditions.timeString(minutes: (parts.hour ?? 0) * 60 + (parts.minute ?? 0))
+            }
+        )
     }
 }
 

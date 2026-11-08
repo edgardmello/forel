@@ -53,6 +53,31 @@ import Foundation
         }
     }
 
+    @Test func ruleLastRanThrottlesTheRuleAcrossFiles() throws {
+        try withMemory { db in
+            let dir = TempDir()
+            let first = dir.file("a.txt", contents: "a")
+            let second = dir.file("b.txt", contents: "b")
+            let folder = WatchedFolder(path: dir.path)
+            try db.insertFolder(folder)
+            var rule = makeRule(folderId: folder.id, name: "throttled")
+            rule.conditions = [makeCondition(.ruleLastRan, .olderThan, "10 minutes", ruleId: rule.id)]
+            rule.actions = [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["seen"])]), ruleId: rule.id)]
+            try db.insertRule(rule)
+
+            #expect(RuleMatchMemory.shared.lastMatch(ruleId: rule.id) == nil)
+            #expect(RuleEngine.run(path: first, depth: 0, rules: [rule], batchId: "b1", root: dir.path).matched == ["throttled"])
+            // Another file right after: the rule ran less than 10 minutes ago.
+            #expect(RuleEngine.run(path: second, depth: 0, rules: [rule], batchId: "b2", root: dir.path).matched.isEmpty)
+            #expect(ConditionEvaluator.evaluate(makeCondition(.ruleLastRan, .withinLast, "1 hours", ruleId: rule.id), path: second))
+
+            let later = Date().addingTimeInterval(11 * 60)
+            ScheduleConditions.$clock.withValue(later) {
+                #expect(RuleEngine.run(path: second, depth: 0, rules: [rule], batchId: "b3", root: dir.path).matched == ["throttled"])
+            }
+        }
+    }
+
     @Test func neverMatchedCountsAsMatchedLongAgo() throws {
         try withMemory { _ in
             let dir = TempDir()

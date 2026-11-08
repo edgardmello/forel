@@ -114,6 +114,9 @@ public enum ConditionKind: String, Codable, Equatable, Sendable {
     case timesMatched = "times_matched"
     case duplicate
     case aiClassification = "ai_classification"
+    case timeOfDay = "time_of_day"
+    case dayOfWeek = "day_of_week"
+    case ruleLastRan = "rule_last_ran"
 
     public init(dbValue: String) {
         self = ConditionKind(rawValue: dbValue) ?? .name

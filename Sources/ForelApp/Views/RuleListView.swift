@@ -667,9 +667,17 @@ private struct RuleDetails: View {
             RuleDetailRow(
                 icon: condition.kind.iconSystemName,
                 badge: condition.kind.label,
-                title: "\(condition.operator.label) \(condition.kind == .duplicate ? (DuplicateScope(rawValue: condition.value)?.label ?? condition.value) : condition.value)",
+                title: "\(condition.operator.label) \(conditionValueLabel(condition))",
                 detail: nil
             )
+        }
+    }
+
+    private func conditionValueLabel(_ condition: Condition) -> String {
+        switch condition.kind {
+        case .duplicate: return DuplicateScope(rawValue: condition.value)?.label ?? condition.value
+        case .dayOfWeek: return WeekdayValue(rawValue: condition.value)?.label ?? condition.value
+        default: return condition.value
         }
     }
 

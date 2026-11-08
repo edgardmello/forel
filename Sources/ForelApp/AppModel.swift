@@ -91,6 +91,7 @@ final class AppModel: ObservableObject {
     private let ruleRunStatsWindowDays = 30
     private var historyCleanupTimer: AnyCancellable?
     private var recheckTimer: AnyCancellable?
+    private var scheduleBoundaryTimer: Timer?
     private var wakeObserver: NSObjectProtocol?
     private var pendingWatcherNotification = PendingWatcherNotification()
     private var watcherNotificationTask: Task<Void, Never>?
@@ -222,7 +223,9 @@ final class AppModel: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.recheckIntervalMinutes > 0 else { return }
+                guard let self else { return }
+                self.scheduleBoundaryRecheck()
+                guard self.recheckIntervalMinutes > 0 else { return }
                 self.recheckNow()
             }
         }
@@ -465,6 +468,31 @@ final class AppModel: ObservableObject {
         guard let folderId = selectedFolderId else { rules = []; return }
         rules = db.withLock { db in (try? db.listRules(folderId: folderId)) ?? [] }
         reloadRuleRunStats()
+        scheduleBoundaryRecheck()
+    }
+
+    /// Re-checks rules the moment a "Time of day" window opens or closes,
+    /// or the day changes for "Day of the week", instead of waiting for
+    /// the next periodic re-check. Rescheduled whenever rules change.
+    func scheduleBoundaryRecheck() {
+        scheduleBoundaryTimer?.invalidate()
+        scheduleBoundaryTimer = nil
+        let allRules = db.withLock { db -> [Rule] in
+            ((try? db.listFolders()) ?? []).filter(\.enabled).flatMap { folder in
+                (try? db.listRules(folderId: folder.id)) ?? []
+            }
+        }
+        guard let next = ScheduleConditions.nextBoundary(after: Date(), rules: allRules) else { return }
+        // A few seconds late, so the boundary minute has begun everywhere.
+        let timer = Timer(fire: next.addingTimeInterval(2), interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.recheckNow()
+                self?.scheduleBoundaryRecheck()
+            }
+        }
+        timer.tolerance = 5
+        RunLoop.main.add(timer, forMode: .common)
+        scheduleBoundaryTimer = timer
     }
 
     func reloadHistory() {
