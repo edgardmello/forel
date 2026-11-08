@@ -266,13 +266,16 @@ report_local_signature() {
 # no Apple Developer account needed; only for builds you run yourself (other
 # Macs would still see an unidentified developer).
 setup_local_signing() {
-  local work openssl_legacy=() password
+  local work password ossl
   if security find-identity -p codesigning 2>/dev/null | grep -q "\"$local_signing_name\""; then
     echo "\"$local_signing_name\" already exists in your keychain — nothing to do."
     return
   fi
+  # Prefer the system LibreSSL over a Homebrew OpenSSL earlier in PATH.
+  ossl=openssl
+  [[ -x /usr/bin/openssl ]] && ossl=/usr/bin/openssl
   work="$(mktemp -d "${TMPDIR:-/tmp}/forel-signing.XXXXXX")"
-  password="$(openssl rand -hex 16)"
+  password="$("$ossl" rand -hex 16)"
   cat > "$work/cert.cnf" <<EOF
 [req]
 distinguished_name = dn
@@ -285,17 +288,28 @@ basicConstraints = critical, CA:false
 keyUsage = critical, digitalSignature
 extendedKeyUsage = critical, codeSigning
 EOF
-  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+  "$ossl" req -x509 -newkey rsa:2048 -nodes -days 3650 \
     -config "$work/cert.cnf" -keyout "$work/key.pem" -out "$work/cert.pem" >/dev/null 2>&1
-  # OpenSSL 3 (e.g. Homebrew) defaults to PKCS#12 ciphers `security` can't read.
-  if openssl version 2>/dev/null | grep -q '^OpenSSL 3'; then
-    openssl_legacy=(-legacy)
-  fi
-  openssl pkcs12 -export ${openssl_legacy[@]+"${openssl_legacy[@]}"} \
+  # macOS `security import` only reads PKCS#12 files that use a SHA-1 MAC and
+  # 3DES for the key and certificate. OpenSSL 3 and recent LibreSSL default to
+  # AES-256 with a SHA-256 MAC, which `security` reports as "MAC verification
+  # failed (wrong password?)". Ask for the old algorithms explicitly.
+  "$ossl" pkcs12 -export \
+    -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
     -inkey "$work/key.pem" -in "$work/cert.pem" -name "$local_signing_name" \
     -out "$work/identity.p12" -passout "pass:$password"
-  security import "$work/identity.p12" -P "$password" -T /usr/bin/codesign >/dev/null
+  if ! security import "$work/identity.p12" -P "$password" -T /usr/bin/codesign >/dev/null 2>&1; then
+    echo "PKCS#12 import refused; importing the key and certificate separately." >&2
+    # The keychain pairs a private key and its certificate into an identity.
+    security import "$work/key.pem" -t priv -f openssl -T /usr/bin/codesign >/dev/null
+    security import "$work/cert.pem" -t cert -f pemseq >/dev/null
+  fi
   rm -rf "$work"
+  if ! security find-identity -p codesigning 2>/dev/null | grep -q "\"$local_signing_name\""; then
+    echo "The certificate was imported, but macOS doesn't list it as a code-signing identity." >&2
+    echo "Open Keychain Access, delete any \"$local_signing_name\" items, and run this again." >&2
+    exit 1
+  fi
   echo "Created \"$local_signing_name\" in your login keychain."
   echo "Next: ./build.sh package (or dev). If macOS asks whether codesign may use"
   echo "the key, choose Always Allow. After installing the newly signed Forel,"
