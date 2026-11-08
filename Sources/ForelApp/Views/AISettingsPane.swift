@@ -24,6 +24,7 @@ struct AISettingsPane: View {
     @EnvironmentObject var model: AppModel
     @State private var apiKey = ""
     @State private var keySaved = false
+    @State private var showingModels = false
 
     var body: some View {
         Group {
@@ -66,7 +67,26 @@ struct AISettingsPane: View {
                             GlassField(placeholder: "https://…/v1", text: baseURLBinding)
                         }
                         row("Model") {
-                            GlassField(placeholder: "Model ID", text: modelBinding)
+                            HStack(spacing: 6) {
+                                GlassField(placeholder: "Model ID", text: modelBinding)
+                                Button {
+                                    showingModels = true
+                                } label: {
+                                    Image(systemName: "chevron.up.chevron.down")
+                                }
+                                .help("Choose from the models this service offers")
+                                .accessibilityLabel("Choose a model")
+                                .popover(isPresented: $showingModels, arrowEdge: .bottom) {
+                                    AIModelListPopover(
+                                        settings: model.aiSettings,
+                                        apiKey: apiKey,
+                                        selected: model.aiSettings.model
+                                    ) { id in
+                                        model.updateAISettings { $0.model = id }
+                                        showingModels = false
+                                    }
+                                }
+                            }
                         }
                         row("API key") {
                             HStack {
@@ -153,5 +173,88 @@ struct AISettingsPane: View {
 
     private var modelBinding: Binding<String> {
         Binding(get: { model.aiSettings.model }, set: { value in model.updateAISettings { $0.model = value } })
+    }
+}
+
+/// The models the service offers, fetched when the popover opens. Typing a
+/// model ID in the field keeps working for services that don't list them.
+private struct AIModelListPopover: View {
+    let settings: AISettings
+    let apiKey: String
+    let selected: String
+    let choose: (String) -> Void
+
+    @State private var models: [String]?
+    @State private var errorMessage: String?
+    @State private var filter = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 12))
+                    .foregroundStyle(ForelTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                Button("Try Again") { Task { await load() } }
+            } else if let models {
+                TextField("Filter", text: $filter)
+                    .textFieldStyle(.roundedBorder)
+                let shown = filtered(models)
+                if shown.isEmpty {
+                    Text("No models match “\(filter)”.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(ForelTheme.secondaryText)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(shown, id: \.self) { id in
+                                Button { choose(id) } label: {
+                                    HStack {
+                                        Image(systemName: "checkmark")
+                                            .opacity(id == selected ? 1 : 0)
+                                        Text(id)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        Spacer(minLength: 0)
+                                    }
+                                    .font(.system(size: 12))
+                                    .padding(.vertical, 4)
+                                    .padding(.horizontal, 6)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            } else {
+                ProgressView("Loading models…")
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .padding(12)
+        .frame(width: 300, height: errorMessage == nil ? 320 : nil)
+        .task { await load() }
+    }
+
+    private func filtered(_ models: [String]) -> [String] {
+        let query = filter.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return models }
+        return models.filter { $0.localizedCaseInsensitiveContains(query) }
+    }
+
+    private func load() async {
+        errorMessage = nil
+        models = nil
+        do {
+            models = try await ScriptGenerator.listModels(settings: settings, apiKey: apiKey)
+        } catch let error as ScriptGenerationError {
+            errorMessage = error.message
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }

@@ -96,4 +96,39 @@ struct ScriptGeneratorTests {
         #expect(AISettings.load(from: db) == settings)
         #expect(AISettings.load(from: db).baseURL == AIProvider.alibabaSingapore.defaultBaseURL)
     }
+
+    @Test func modelListUsesTheSameAddressRules() throws {
+        #expect(ScriptGenerator.modelsEndpoint(AIProvider.deepseek.defaultBaseURL)?.absoluteString == "https://api.deepseek.com/models")
+        #expect(ScriptGenerator.modelsEndpoint("https://x.test/v1/chat/completions")?.absoluteString == "https://x.test/v1/models")
+        #expect(ScriptGenerator.modelsEndpoint("http://127.0.0.1:8090/v1/")?.absoluteString == "http://127.0.0.1:8090/v1/models")
+        #expect(ScriptGenerator.modelsEndpoint("http://example.com/v1") == nil)
+        // A pasted /models address still generates against /chat/completions.
+        #expect(ScriptGenerator.endpoint("https://x.test/v1/models")?.absoluteString == "https://x.test/v1/chat/completions")
+
+        let settings = AISettings(enabled: true, provider: .alibabaSingapore)
+        let request = try ScriptGenerator.modelsRequest(settings: settings, apiKey: " sk-test ")
+        #expect(request.httpMethod == "GET")
+        #expect(request.url?.absoluteString == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk-test")
+        #expect(throws: ScriptGenerationError.self) { try ScriptGenerator.modelsRequest(settings: settings, apiKey: "  ") }
+    }
+
+    @Test func modelListKeepsSortedChatModels() throws {
+        let body = #"{"object":"list","data":[{"id":"qwen-plus"},{"id":"text-embedding-v3"},{"id":"deepseek-chat"},{"id":"qwen-max"},{"id":"qwen-plus"},{"id":"qwen3-tts-flash"}]}"#
+        let ids = try ScriptGenerator.models(fromResponse: Data(body.utf8), statusCode: 200)
+        #expect(ids == ["deepseek-chat", "qwen-max", "qwen-plus"])
+    }
+
+    @Test func modelListReportsServiceErrors() {
+        let refused = #"{"error":{"message":"Invalid API key"}}"#
+        #expect(throws: ScriptGenerationError("The service refused the API key: Invalid API key. Check the key and the service address in Settings → AI.")) {
+            try ScriptGenerator.models(fromResponse: Data(refused.utf8), statusCode: 401)
+        }
+        #expect(throws: ScriptGenerationError("This service doesn't list its models. Type the model ID instead.")) {
+            try ScriptGenerator.models(fromResponse: Data(), statusCode: 404)
+        }
+        #expect(throws: ScriptGenerationError.self) {
+            try ScriptGenerator.models(fromResponse: Data(#"{"data":[]}"#.utf8), statusCode: 200)
+        }
+    }
 }
