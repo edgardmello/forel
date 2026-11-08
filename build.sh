@@ -29,6 +29,15 @@ Arguments:
             signing-setup — or ad-hoc as a last resort)
   --notarize
             Submit and staple the signed app and DMG using Notary API secrets
+  --patch | --minor | --major
+            Use the next patch/minor/major version after the newest one found
+            in git tags, CHANGELOG.md and dist/release (package/release only)
+  --version vX.Y.Z
+            Set the version explicitly (equivalent to the positional form)
+  --tag     After a successful package/release of vX.Y.Z, cut the release:
+            rename [Unreleased] in CHANGELOG.md to [X.Y.Z] with today's date,
+            commit the changelog and create the vX.Y.Z tag. Nothing is pushed;
+            pushing the tag is what triggers the Release workflow
   -i, --interactive
             Always ask for anything missing (command, arch, version, signing)
   --no-interactive
@@ -42,6 +51,9 @@ Interactive mode:
   version, build.sh asks for what is missing. For the version it suggests the
   next patch/minor/major after the newest one found in git tags, CHANGELOG.md
   and dist/release, and prints the equivalent one-line command before building.
+  After a successful package of a real release version it also offers to cut
+  the release — rename [Unreleased] in CHANGELOG.md to the new version, commit
+  it and create the tag (--tag does it without asking).
 
 Non-interactive defaults:
   command   release
@@ -58,6 +70,9 @@ Examples:
   ./build.sh package arm64 v1.2.3 --sign --notarize
   ./build.sh package universal v1.2.3 --sign --notarize
   ./build.sh release x86_64 v1.2.3
+  ./build.sh release --patch
+  ./build.sh release --minor --tag
+  ./build.sh package arm64 --version=v1.2.3
 EOF
 }
 
@@ -400,6 +415,48 @@ bump_version() {
   echo "${major}.${minor}.${patch}${suffix}"
 }
 
+# True when $1 is a real release version (vX.Y.Z — no suffix like -local).
+is_release_version() {
+  [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+# Cuts the release for $1 (version number without the leading v): renames the
+# [Unreleased] section in CHANGELOG.md to [X.Y.Z] with today's date, commits
+# only CHANGELOG.md (other staged changes are left staged) and creates the
+# vX.Y.Z tag that triggers the Release workflow. Never pushes — the push is
+# left to the operator.
+cut_release() {
+  local number="$1" today unreleased_entries changed=false
+  today="$(date +%Y-%m-%d)"
+  if git -C "$repo_root" rev-parse -q --verify "refs/tags/v$number" >/dev/null 2>&1; then
+    echo "Tag v$number already exists — nothing to cut." >&2
+    return 1
+  fi
+  if grep -q '^## \[Unreleased\]$' "$repo_root/CHANGELOG.md"; then
+    unreleased_entries="$(awk '/^## \[Unreleased\]$/ {f=1; next} /^## \[/ {f=0} f' "$repo_root/CHANGELOG.md" | grep -c '[^[:space:]]' || true)"
+    if [[ "$unreleased_entries" -eq 0 ]]; then
+      echo "The [Unreleased] section in CHANGELOG.md is empty — add entries before cutting v$number." >&2
+      return 1
+    fi
+    sed -i '' -e "s|^## \[Unreleased\]$|## [$number] - $today|" "$repo_root/CHANGELOG.md"
+    git -C "$repo_root" add CHANGELOG.md
+    if ! git -C "$repo_root" commit --only -m "Bump to $number" -- CHANGELOG.md; then
+      echo "Commit failed — the CHANGELOG.md rename is kept; commit it and tag v$number by hand." >&2
+      return 1
+    fi
+    changed=true
+  else
+    echo "CHANGELOG.md has no [Unreleased] section — tagging without changelog changes." >&2
+  fi
+  git -C "$repo_root" tag "v$number"
+  if [[ "$changed" == true ]]; then
+    echo "Cut v$number: CHANGELOG renamed and committed, tag created. Publish with:"
+  else
+    echo "Cut v$number: tag created (no changelog changes). Publish with:"
+  fi
+  echo "  git push origin main --tags"
+}
+
 ask_version() {
   local latest head_tag options=() default_index=1 entered
   head_tag="$(git -C "$repo_root" describe --tags --exact-match 2>/dev/null || true)"
@@ -485,6 +542,7 @@ run_interactive_setup() {
     summary+=" $version"
     [[ "$sign_requested" == true ]] && summary+=" --sign"
     [[ "$notarize_requested" == true ]] && summary+=" --notarize"
+    [[ "$tag_requested" == true ]] && summary+=" --tag"
   fi
   echo "" >&2
   echo "About to run: $summary" >&2
@@ -512,10 +570,13 @@ sign_requested=false
 sign_given=false
 notarize_requested=false
 notarize_given=false
+bump_part=""
+tag_requested=false
+version_flag=""
 interactive_mode=auto
 positional_args=()
-for arg in "$@"; do
-  case "$arg" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     -h|--help)
       usage
       exit 0
@@ -528,6 +589,23 @@ for arg in "$@"; do
       notarize_requested=true
       notarize_given=true
       ;;
+    --patch|--minor|--major)
+      bump_part="${1#--}"
+      ;;
+    --version)
+      if [[ -z "${2:-}" ]]; then
+        echo "--version needs a value like v1.2.3" >&2
+        exit 1
+      fi
+      version_flag="$2"
+      shift
+      ;;
+    --version=*)
+      version_flag="${1#*=}"
+      ;;
+    --tag)
+      tag_requested=true
+      ;;
     -i|--interactive)
       interactive_mode=always
       ;;
@@ -535,14 +613,15 @@ for arg in "$@"; do
       interactive_mode=never
       ;;
     -*)
-      echo "Unknown option: $arg" >&2
+      echo "Unknown option: $1" >&2
       usage
       exit 1
       ;;
     *)
-      positional_args+=("$arg")
+      positional_args+=("$1")
       ;;
   esac
+  shift
 done
 if [[ ${#positional_args[@]} -gt 0 ]]; then
   set -- "${positional_args[@]}"
@@ -560,6 +639,34 @@ arch_given=false
 [[ $# -ge 1 ]] && arch_given=true
 arch="${1:-$(uname -m)}"
 version="${2:-}"
+
+# Resolve the version. --version and the positional form are equivalent and
+# mutually exclusive; --patch/--minor/--major pick the next version after the
+# newest one known. Everything is validated here so a typo fails before the
+# build starts.
+if [[ -n "$version_flag" ]]; then
+  if [[ -n "$version" ]]; then
+    echo "Version given twice (positional and --version)" >&2
+    exit 1
+  fi
+  version="$version_flag"
+fi
+if [[ -n "$version" ]] && ! is_version "$version"; then
+  echo "Invalid version '$version' — use the form v1.2.3 (an optional -suffix is allowed)." >&2
+  exit 1
+fi
+if [[ -n "$bump_part" ]]; then
+  if [[ -n "$version" ]]; then
+    echo "--$bump_part cannot be combined with an explicit version" >&2
+    exit 1
+  fi
+  latest_version="$(latest_known_version)"
+  if [[ -z "$latest_version" ]]; then
+    echo "No previous version found in git tags, CHANGELOG.md or dist/release — pass an explicit version." >&2
+    exit 1
+  fi
+  version="v$(bump_version "$latest_version" "$bump_part")"
+fi
 
 # Interactive mode only kicks in from a real terminal, so CI and scripts that
 # pass full arguments keep the exact same behavior.
@@ -609,6 +716,16 @@ if [[ "$notarize_requested" == true ]]; then
   notary_work="$(mktemp -d "${TMPDIR:-/tmp}/Forel-notary.XXXXXX")"
   printf '%s' "$NOTARY_API_KEY_P8" | base64 --decode > "$notary_work/AuthKey.p8"
   chmod 600 "$notary_work/AuthKey.p8"
+fi
+
+if [[ -n "$bump_part" && "$command" != "package" && "$command" != "release" ]]; then
+  echo "--$bump_part is only supported with package or release" >&2
+  exit 1
+fi
+
+if [[ "$tag_requested" == true && "$command" != "package" && "$command" != "release" ]]; then
+  echo "--tag is only supported with package or release" >&2
+  exit 1
 fi
 
 case "$command" in
@@ -686,8 +803,17 @@ case "$command" in
         ;;
     esac
 
+    if is_release_version "$version"; then
+      dirty_count="$(git -C "$repo_root" status --porcelain 2>/dev/null | grep -c . || true)"
+      if [[ "$dirty_count" -gt 0 ]]; then
+        echo "WARNING: packaging $version with $dirty_count uncommitted change(s); the DMG contents will not be reproducible from git." >&2
+      fi
+    fi
+
     cd "$repo_root"
+    build_started=$SECONDS
     swift_release_build "$arch"
+    build_secs=$((SECONDS - build_started))
 
     if [[ -f "$icon_source" ]]; then
       mkdir -p "$repo_root/dist"
@@ -771,6 +897,28 @@ case "$command" in
 
     echo "Created $dmg_path"
     rm -rf "$iconset_dir" "$staging_root" "$icns_path"
+
+    echo ""
+    echo "Swift release build took $((build_secs / 60))m$((build_secs % 60))s. DMGs in $dist_dir:"
+    for dmg in "$dist_dir"/*.dmg; do
+      [[ -e "$dmg" ]] || continue
+      printf '  %6s  %s\n' "$(du -h "$dmg" | cut -f1)" "${dmg##*/}"
+    done
+
+    if is_release_version "$version"; then
+      if git -C "$repo_root" rev-parse -q --verify "refs/tags/$version" >/dev/null 2>&1; then
+        echo "Tag $version already exists — nothing to cut."
+      elif [[ "$tag_requested" == true ]]; then
+        cut_release "$version_number"
+      elif [[ "$interactive_mode" == always ]]; then
+        if confirm "Cut release $version now? Renames [Unreleased] in CHANGELOG.md to [$version_number], commits it and creates the tag" n; then
+          cut_release "$version_number"
+        fi
+      else
+        echo "Rerun with --tag (or interactively) to cut this release: rename"
+        echo "[Unreleased] in CHANGELOG.md, commit it and create the $version tag."
+      fi
+    fi
     ;;
 
   *)

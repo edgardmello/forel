@@ -8,6 +8,7 @@ All notable changes to Forel are documented here. Format loosely follows
 ### Changed
 - Clear History now asks for confirmation and says that cleared actions can no longer be undone.
 - Forel now appears in the Dock whenever one of its windows is open and leaves the Dock, keeping only the menu bar icon, when you close the window. Reopening it from the menu bar, Finder or Spotlight brings the Dock icon back. The "Show Dock icon" setting was removed.
+- `./build.sh` can now pick the release version by itself (`--patch`, `--minor`, `--major` or `--version=`) and can cut the release after a successful build: rename the changelog's Unreleased section to the new version, commit it and create the tag. Release builds also warn about uncommitted changes and list the generated disk images with their sizes.
 
 ### Fixed
 - Opening Forel now brings its window to the front instead of leaving it behind other apps' windows, including when it was closed the last time Forel quit.
