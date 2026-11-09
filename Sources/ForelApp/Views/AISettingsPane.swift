@@ -36,7 +36,7 @@ struct AISettingsPane: View {
                         Text("Write scripts and review rules with AI")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(ForelTheme.primaryText)
-                        Text("Adds Generate Code to script actions and Review with AI to the rule editor. They run only when you press them.")
+                        Text("Adds Generate Code to script actions and Review with AI to the rule editor and the rule list's right-click menu. They run only when you press them.")
                             .font(.system(size: 11))
                             .foregroundStyle(ForelTheme.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -115,7 +115,7 @@ struct AISettingsPane: View {
 
                     When you press Review with AI, Forel sends that rule (its conditions, actions, folder paths and scripts, \
                     with upload passwords removed), the watched folder's path, the folder's other rules and your macOS \
-                    version, and, when you apply suggestions or reply to the AI, the ones you chose and what you wrote. It never sends the names or contents of your files.
+                    version, the goal you describe for the rule, and, when you apply suggestions or reply to the AI, the ones you chose and what you wrote. It never sends the names or contents of your files.
 
                     The API key is kept in your Keychain. Read a generated script or a suggested rule before saving: it runs with your permissions.
                     """)

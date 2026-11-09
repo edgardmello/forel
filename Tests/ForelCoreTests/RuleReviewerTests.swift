@@ -61,7 +61,7 @@ struct RuleReviewerTests {
         let messages = try #require(body["messages"] as? [[String: String]])
         let system = try #require(messages.first?["content"])
         #expect(system.contains("in Portuguese"))
-        #expect(system.contains("work out what the rule is meant to achieve"))
+        #expect(system.contains("otherwise work out what it is meant to achieve"))
         let user = try #require(messages.last?["content"])
         #expect(user.contains("Watched folder: /Users/me/Downloads"))
         #expect(user.contains("\"kind\" : \"extension\""))
@@ -277,6 +277,25 @@ struct RuleReviewerTests {
         guard case .edit(let edit) = answered else { Issue.record("expected an edit"); return }
         #expect(edit.explanation == "Skipping avoids overwriting.")
         #expect(edit.rule.actions[1].params[ActionParam.uploadURL]?.stringValue == "sftp://me:secret@host.test/in/")
+    }
+
+    @Test func theUsersGoalGuidesTheAnalysisAndTheEdit() throws {
+        let rule = sampleRule()
+        let settings = AISettings(enabled: true, provider: .deepseek)
+        let withGoal = try RuleReviewer.reviewRequest(
+            rule: rule, folderPath: nil, otherRules: [], goal: "  file invoices by year, never delete  ",
+            settings: settings, apiKey: "sk-test"
+        )
+        let messages = try #require(try body(withGoal)["messages"] as? [[String: String]])
+        #expect(messages[0]["content"]?.contains("judge the rule against that goal") == true)
+        #expect(messages[1]["content"]?.contains("What this rule should achieve, in my words: file invoices by year, never delete") == true)
+
+        let without = try RuleReviewer.reviewUserMessage(rule: rule, folderPath: nil, otherRules: [], goal: "   ")
+        #expect(!without.contains("What this rule should achieve"))
+
+        let suggestion = RuleReviewSuggestion(id: 0, category: .other, title: "x", detail: "")
+        let edit = try RuleReviewer.editUserMessage(rule: rule, folderPath: nil, suggestions: [suggestion], goal: "file invoices")
+        #expect(edit.contains("What this rule should achieve, in my words: file invoices"))
     }
 
     @Test func languageComesFromThePreferredLanguages() {

@@ -29,6 +29,7 @@ struct RuleTableView: View {
     @Binding var selection: Set<String>
     @Binding var showsInspector: Bool
     let onEdit: (Rule) -> Void
+    let onReview: (Rule) -> Void
     let onDelete: ([Rule]) -> Void
 
     private var selectedRules: [Rule] {
@@ -167,6 +168,9 @@ struct RuleTableView: View {
             let targets = rules.filter { ids.contains($0.id) }
             if targets.count == 1, let rule = targets.first {
                 Button("Edit…") { onEdit(rule) }
+                if model.aiSettings.enabled {
+                    Button("Review with AI…") { onReview(rule) }
+                }
                 Button("Duplicate") { model.duplicateRule(rule) }
                 Button("Copy Share Link") { model.copyShareLink(for: rule) }
                 Divider()

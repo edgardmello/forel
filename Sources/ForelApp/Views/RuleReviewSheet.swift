@@ -52,8 +52,9 @@ struct ReviewRuleButton: View {
     }
 }
 
-/// Analyzes the rule as it stands in the editor as soon as it opens and
-/// lists the suggestions (all chosen by default). The user can answer the
+/// First asks, optionally, what the rule should achieve, so the service can
+/// judge it against that goal, then analyzes the rule and lists the
+/// suggestions (all chosen by default). The user can answer the
 /// service with new directions or ideas, which updates the suggestions, then
 /// have it write the rule with the chosen ones. The written rule is shown as
 /// JSON and can be discussed the same way before it replaces the editor's
@@ -68,6 +69,7 @@ struct RuleReviewSheet: View {
 
     private enum Phase { case analyzing, editing, replying }
 
+    @State private var goal = ""
     @State private var review: RuleReview?
     @State private var reviewConversation: RuleReviewConversation?
     @State private var edit: RuleEdit?
@@ -136,6 +138,16 @@ struct RuleReviewSheet: View {
             } else if let review {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
+                        if !goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Label {
+                                Text("Goal: \(goal.trimmingCharacters(in: .whitespacesAndNewlines))").textSelection(.enabled)
+                            } icon: {
+                                Image(systemName: "target")
+                            }
+                            .font(.system(size: 11))
+                            .foregroundStyle(ForelTheme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
                         if let lastReply { youSaid(lastReply) }
                         ReviewResultView(review: review, chosen: $chosen)
                     }
@@ -143,7 +155,7 @@ struct RuleReviewSheet: View {
                 }
                 .frame(maxHeight: .infinity)
             } else {
-                Spacer(minLength: 0)
+                goalForm
             }
 
             if canReply {
@@ -166,7 +178,7 @@ struct RuleReviewSheet: View {
                 }
             }
 
-            Text("Sends this rule (conditions, actions, folder paths and scripts, without upload passwords), the watched folder's path, its other rules and your replies — never the names or contents of your files.")
+            Text("Sends this rule (conditions, actions, folder paths and scripts, without upload passwords), the watched folder's path, its other rules, the goal you describe and your replies — never the names or contents of your files.")
                 .font(.system(size: 10))
                 .foregroundStyle(ForelTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -199,8 +211,15 @@ struct RuleReviewSheet: View {
                             .buttonStyle(PrimaryButtonStyle())
                             .help("Load this rule into the editor, where you can check it, test it and save it")
                     } else {
-                        Button("Analyze Again", action: analyze)
-                            .buttonStyle(SecondaryButtonStyle())
+                        if review == nil {
+                            Button("Analyze", action: analyze)
+                                .buttonStyle(PrimaryButtonStyle())
+                                .keyboardShortcut(.defaultAction)
+                        } else {
+                            Button("Analyze Again", action: analyze)
+                                .buttonStyle(SecondaryButtonStyle())
+                                .help("Analyze the rule again from the start, with the same goal")
+                        }
                         if let review, !review.suggestions.isEmpty {
                             Button(chosen.count > 1 ? "Apply \(chosen.count) Suggestions" : "Apply Suggestion", action: applyChosen)
                                 .buttonStyle(PrimaryButtonStyle())
@@ -215,8 +234,27 @@ struct RuleReviewSheet: View {
         .padding(22)
         .frame(width: 720, height: 640)
         .background(ForelTheme.background)
-        .onAppear { if review == nil && phase == nil { analyze() } }
         .onDisappear { task?.cancel() }
+    }
+
+    /// Before the first analysis: what the rule should achieve, in the
+    /// user's own words. Optional; without it the service works the goal
+    /// out from the rule.
+    private var goalForm: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("What should this rule achieve?")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(ForelTheme.primaryText)
+            Text("Optional. Describing the goal gives the AI more context to judge the rule and suggest better ways to get there. Leave it empty and it works the goal out from the rule.")
+                .font(.system(size: 11))
+                .foregroundStyle(ForelTheme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("e.g. “file bank statements by year and keep only the PDFs; never delete anything”", text: $goal, axis: .vertical)
+                .lineLimit(3...6)
+                .textFieldStyle(.roundedBorder)
+            Spacer(minLength: 0)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private func progressText(_ phase: Phase) -> String {
@@ -244,11 +282,11 @@ struct RuleReviewSheet: View {
         lastReply = nil
         phase = .analyzing
         let apiKey = AIKeychain.key(for: settings.provider.rawValue)
-        let rule = rule, folderPath = folderPath, otherRules = otherRules, settings = settings
+        let rule = rule, folderPath = folderPath, otherRules = otherRules, goal = goal, settings = settings
         task = Task {
             do {
                 let (result, conversation) = try await RuleReviewer.review(
-                    rule: rule, folderPath: folderPath, otherRules: otherRules, settings: settings, apiKey: apiKey
+                    rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal, settings: settings, apiKey: apiKey
                 )
                 guard !Task.isCancelled else { return }
                 show(result, conversation: conversation)
@@ -271,11 +309,11 @@ struct RuleReviewSheet: View {
         error = nil
         phase = .editing
         let apiKey = AIKeychain.key(for: settings.provider.rawValue)
-        let rule = rule, folderPath = folderPath, settings = settings
+        let rule = rule, folderPath = folderPath, goal = goal, settings = settings
         task = Task {
             do {
                 let (result, conversation) = try await RuleReviewer.edit(
-                    rule: rule, folderPath: folderPath, suggestions: suggestions, settings: settings, apiKey: apiKey
+                    rule: rule, folderPath: folderPath, suggestions: suggestions, goal: goal, settings: settings, apiKey: apiKey
                 )
                 guard !Task.isCancelled else { return }
                 edit = result

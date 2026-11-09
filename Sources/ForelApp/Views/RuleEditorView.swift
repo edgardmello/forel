@@ -22,11 +22,25 @@ import ForelCore
 import Photos
 #endif
 
-private struct AIEditState {
+/// What "Review with AI" changed in the editor's draft, so the editor can
+/// say so and offer to go back.
+struct AIEditState {
     let previous: Rule
     let count: Int
     let explanation: String?
     let addsRiskyActions: Bool
+
+    init(previous: Rule, edit: RuleEdit, count: Int) {
+        self.previous = previous
+        self.count = count
+        explanation = edit.explanation
+        // Only warn about scripts, deletions and uploads the AI added or changed.
+        let risky: Set<ActionKind> = [.runScript, .runAppleScript, .runJavaScript, .delete, .upload]
+        addsRiskyActions = edit.rule.actions.contains { action in
+            risky.contains(action.kind)
+                && !previous.actions.contains { $0.kind == action.kind && $0.params == action.params }
+        }
+    }
 }
 
 struct RuleEditorView: View {
@@ -45,8 +59,11 @@ struct RuleEditorView: View {
     let onSave: (Rule) -> Void
     let onCancel: () -> Void
 
-    init(rule: Rule, preferredHeight: CGFloat = 680, onSave: @escaping (Rule) -> Void, onCancel: @escaping () -> Void) {
+    /// `aiEdit` opens the editor on a rule "Review with AI" already rewrote
+    /// (from the rule list), with the notice and Undo shown.
+    init(rule: Rule, aiEdit: AIEditState? = nil, preferredHeight: CGFloat = 680, onSave: @escaping (Rule) -> Void, onCancel: @escaping () -> Void) {
         _rule = State(initialValue: rule)
+        _aiEdit = State(initialValue: aiEdit)
         self.preferredHeight = max(680, preferredHeight)
         self.onSave = onSave
         self.onCancel = onCancel
@@ -238,13 +255,7 @@ struct RuleEditorView: View {
                     .foregroundStyle(ForelTheme.primaryText)
                 Spacer()
                 ReviewRuleButton(rule: rule) { edit, count in
-                    let risky: Set<ActionKind> = [.runScript, .runAppleScript, .runJavaScript, .delete, .upload]
-                    // Only warn about scripts, deletions and uploads the AI added or changed.
-                    let addsRisk = edit.rule.actions.contains { action in
-                        risky.contains(action.kind)
-                            && !rule.actions.contains { $0.kind == action.kind && $0.params == action.params }
-                    }
-                    aiEdit = AIEditState(previous: rule, count: count, explanation: edit.explanation, addsRiskyActions: addsRisk)
+                    aiEdit = AIEditState(previous: rule, edit: edit, count: count)
                     rule = edit.rule
                     hasTestedRule = false
                     showValidationErrors = false
