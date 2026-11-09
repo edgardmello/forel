@@ -159,6 +159,9 @@ public enum RuleReviewMemory {
     static let maximumPromptCharacters = 6_000
     /// A saved rule longer than this is described, not quoted.
     static let maximumQuotedRule = 2_500
+    /// Most replies quoted per past review, and most characters of each.
+    static let maximumQuotedReplies = 5
+    static let maximumQuotedReply = 300
     /// Reviews kept on disk; older ones are forgotten first.
     public static let maximumStoredRecords = 200
 
@@ -230,7 +233,10 @@ public enum RuleReviewMemory {
         if accepted.isEmpty, rejected.isEmpty, !record.suggestions.isEmpty, record.outcome == .reviewed {
             lines.append("- I applied none of: " + record.suggestions.map(\.title).joined(separator: "; "))
         }
-        for reply in record.replies { lines.append("- I told the AI: \(reply)") }
+        // The latest replies say the most; keep each one short.
+        for reply in record.replies.suffix(maximumQuotedReplies) {
+            lines.append("- I told the AI: " + RuleReviewRecord.clip(reply, maximumQuotedReply))
+        }
         if let outcome = outcomeLine(record) { lines.append("- \(outcome)") }
         if record.outcome == .saved, let saved = record.savedRule ?? record.proposedRule {
             lines.append(saved.count <= maximumQuotedRule ? "- The rule I saved:\n\(saved)" : "- (The saved rule is too long to quote.)")
