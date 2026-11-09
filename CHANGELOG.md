@@ -14,6 +14,8 @@ All notable changes to Forel are documented here. Format loosely follows
 - With an Alibaba Coding Plan or Token Plan key (one starting with `sk-sp-`), Generate Code and the model list now explain that these subscription keys only work in the plan's coding tools and point you to a pay-as-you-go key, instead of failing with "Incorrect API key".
 - `./build.sh signing-setup` no longer fails with "MAC verification failed during PKCS12 import (wrong password?)" when OpenSSL 3 or a recent LibreSSL is installed.
 - Opening Forel now brings its window to the front instead of leaving it behind other apps' windows, including when it was closed the last time Forel quit.
+- Sort into subfolder now fills in tokens such as `{year}-{month}-{day}` or a named regex group, in Run Now, Dry Run and automatic runs alike, instead of creating a folder literally named after the token. Display notification fills in tokens in its title and text too.
+- Review with AI now tells the AI exactly which tokens Forel has and where they work, and rejects a proposed rule that uses a token Forel doesn't fill in, explaining which one, instead of applying it. It also steers the AI toward conditions that match your goal directly (such as the app a file was downloaded with) and to describe any second rule the goal needs.
 
 ### Added
 - View as JSON in the rule editor shows the rule's scope, conditions and actions as JSON, ready to read or copy.

@@ -90,6 +90,38 @@ public enum TokenExpander {
         return try expandAITokens(result, path: path)
     }
 
+    /// The plain `{word}` tokens Forel fills in, with what each becomes —
+    /// the one list the AI prompt and the token check read.
+    public static let builtInTokens: [(token: String, meaning: String)] = [
+        ("name", "the file name without its extension"),
+        ("extension", "the extension, without the dot"),
+        ("current_date", "today's date as YYYY-MM-DD, at the moment the rule runs"),
+        ("year", "the current year, e.g. 2026, at the moment the rule runs"),
+        ("month", "the current month as 01-12, at the moment the rule runs"),
+        ("day", "the current day of the month as 01-31, at the moment the rule runs"),
+        ("date_modified", "the file's modification date as YYYY-MM-DD"),
+        ("date_created", "the file's creation date as YYYY-MM-DD"),
+        ("size", "the file size, e.g. 1.2MB"),
+    ]
+
+    /// The `{word}` tokens in `template` that Forel doesn't fill in — a
+    /// name that is neither built in nor one of `captureNames` (named
+    /// groups of the rule's regex conditions) stays in the result as typed,
+    /// e.g. a folder literally named `{date}`. `{content:…}` and `{ai:…}`
+    /// tokens are always known.
+    public static func unknownTokens(in template: String, captureNames: Set<String> = []) -> [String] {
+        guard template.contains("{"),
+              let re = try? NSRegularExpression(pattern: #"\{([A-Za-z_][A-Za-z0-9_]*)\}"#) else { return [] }
+        let known = Set(builtInTokens.map(\.token)).union(captureNames)
+        var seen = Set<String>()
+        return re.matches(in: template, range: NSRange(template.startIndex..., in: template)).compactMap { match in
+            guard let range = Range(match.range(at: 1), in: template) else { return nil }
+            let name = String(template[range])
+            guard !known.contains(name), seen.insert(name).inserted else { return nil }
+            return "{\(name)}"
+        }
+    }
+
     private static func substituteCaptures(_ template: String, _ captures: [String: String]) -> String {
         guard !captures.isEmpty, template.contains("{") else { return template }
         var result = template
