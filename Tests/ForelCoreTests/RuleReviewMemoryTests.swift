@@ -165,8 +165,6 @@ struct RuleReviewMemoryTests {
 
         // This Mac has an older version of `saved` and a newer one of `other`.
         let db = try Database(path: ":memory:")
-        var olderSaved = saved
-        olderSaved.finish(.reviewed, now: at(-10))
         try db.saveReviewRecord(RuleReviewRecord(id: saved.id, rule: rule, folderPath: nil, goal: "old", review: review, now: at(-10)))
         var newerOther = other
         newerOther.addReply("newer here", now: at(500))
