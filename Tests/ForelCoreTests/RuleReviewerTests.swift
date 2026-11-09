@@ -223,6 +223,56 @@ struct RuleReviewerTests {
         #expect(kept.rule.conditionMatch == .any)
     }
 
+    @Test func editedRuleWithAParamForelDoesntReadIsRejected() throws {
+        let rule = sampleRule()
+        func edit(_ actions: String, base: Rule? = nil) throws -> RuleEdit {
+            try RuleReviewer.edit(fromResponse: answer("""
+            {"rule": {"conditionMatch": "any", "conditionGroups": [{"match": "all", "conditions": [{"kind": "extension", "operator": "is", "value": "pdf"}]}],
+               "actions": [\(actions)]}}
+            """), statusCode: 200, rule: base ?? rule)
+        }
+        do {
+            _ = try edit(#"{"kind": "move_to_folder", "params": {"destination": "/Users/me/Hoje", "folder": "/x", "on_conflict": "merge"}}"#)
+            Issue.record("expected the edit to be rejected")
+        } catch let error as RuleEditError {
+            #expect(error.problems.contains { $0.contains("“folder”") && $0.contains("destination, on_conflict") })
+            #expect(error.problems.contains { $0.contains("“on_conflict”") && $0.contains("rename") })
+        }
+        do {
+            _ = try edit(#"{"kind": "move_to_trash", "params": {"confirm": true}}"#)
+            Issue.record("expected the edit to be rejected")
+        } catch let error as RuleEditError {
+            #expect(error.problems.contains { $0.contains("“confirm”") && $0.contains("takes none") })
+        }
+
+        // Quoted booleans and numbers are read as what they mean.
+        let quoted = try edit(#"{"kind": "rename", "params": {"pattern": "{name}.{extension}", "clean_file_name": "true"}}, {"kind": "pause", "params": {"pause_seconds": "5"}}"#)
+        #expect(quoted.rule.actions[0].params[ActionParam.cleanFileName] == .bool(true))
+        #expect(quoted.rule.actions[1].params[ActionParam.pauseSeconds] == .number(5))
+
+        // A param the user's own rule already had isn't the service's doing.
+        var own = rule
+        own.actions = [Action(ruleId: rule.id, kind: .addTag, params: .object(["tag": .string("Hoje")]), position: 0)]
+        #expect(try edit(#"{"kind": "add_tag", "params": {"tag": "Hoje"}}"#, base: own).rule.actions.count == 1)
+    }
+
+    @Test func theActionCatalogDescribesExactlyTheParamsForelAccepts() throws {
+        let key = try NSRegularExpression(pattern: #"(?<![\w$])([a-z][a-z_]*): "#)
+        for kind in RuleSchema.actionKinds {
+            let help = RuleReviewer.actionParamsHelp(kind)
+            let accepted = Set(RuleReviewer.acceptedParams(kind).keys)
+            for name in accepted {
+                #expect(help.contains(name), "\(kind.rawValue) help doesn't mention \(name)")
+            }
+            let described = key.matches(in: help, range: NSRange(help.startIndex..., in: help)).compactMap {
+                Range($0.range(at: 1), in: help).map { String(help[$0]) }
+            }
+            for name in described {
+                #expect(accepted.contains(name), "\(kind.rawValue) help describes \(name), which Forel doesn't accept")
+            }
+        }
+    }
+
     @Test func promptsListTheRealTokensAndWarnAgainstInventedOnes() {
         for prompt in [RuleReviewer.reviewSystemPrompt(language: "English", macOSVersion: "26.0"),
                        RuleReviewer.editSystemPrompt(language: "English", macOSVersion: "26.0")] {

@@ -11,6 +11,7 @@ All notable changes to Forel are documented here. Format loosely follows
 - `./build.sh` can now pick the release version by itself (`--patch`, `--minor`, `--major` or `--version=`) and can cut the release after a successful build: rename the changelog's Unreleased section to the new version, commit it and create the tag. Release builds also warn about uncommitted changes and list the generated disk images with their sizes.
 
 ### Fixed
+- Review with AI now rejects a proposed rule that gives an action an option Forel doesn't have, or a value of the wrong kind, and says which one and what the action accepts, instead of applying a rule that would quietly ignore it. Quoted true/false and numbers are understood.
 - With an Alibaba Coding Plan or Token Plan key (one starting with `sk-sp-`), Generate Code and the model list now explain that these subscription keys only work in the plan's coding tools and point you to a pay-as-you-go key, instead of failing with "Incorrect API key".
 - `./build.sh signing-setup` no longer fails with "MAC verification failed during PKCS12 import (wrong password?)" when OpenSSL 3 or a recent LibreSSL is installed.
 - Opening Forel now brings its window to the front instead of leaving it behind other apps' windows, including when it was closed the last time Forel quit.

@@ -228,10 +228,12 @@ struct RuleBlueprint: Codable, Equatable {
             }
             var params = action.params ?? .object([:])
             if case .object = params {} else { params = .object([:]) }
+            params = RuleReviewer.normalizedParams(params, kind: kind)
             actions.append(ForelCore.Action(ruleId: base.id, kind: kind, params: params, position: Int64(index)))
         }
         if actions.isEmpty { problems.append("The proposed version has no actions.") }
         problems += RuleReviewer.unknownTokenProblems(in: actions, conditionGroups: groups, base: base)
+        problems += RuleReviewer.paramProblems(in: actions, base: base)
 
         let depth = hasRecursionDepth ? recursionDepth.map { max(0, $0) } : base.recursionDepth
         var rule = base
@@ -274,6 +276,140 @@ public enum RuleReviewer {
               let url = dict[ActionParam.uploadURL]?.stringValue else { return params }
         dict[ActionParam.uploadURL] = .string(UploadDestination.displayString(for: url))
         return .object(dict)
+    }
+
+    // MARK: Params
+
+    /// What a param's value must be.
+    enum ParamValue: Equatable {
+        case text
+        case bool
+        case number
+        /// Text, or a number Forel reads as one.
+        case textOrNumber
+        /// An array of strings.
+        case list
+        /// One of these strings.
+        case choice([String])
+    }
+
+    /// Every param each action reads, and what its value must be. The
+    /// prompt's action catalog describes these; a test keeps the two equal.
+    static func acceptedParams(_ kind: ActionKind) -> [String: ParamValue] {
+        let conflict = ParamValue.choice(MoveConflictResolution.allCases.map(\.rawValue))
+        let scriptSource = ParamValue.choice([ScriptSource.embedded.rawValue, ScriptSource.file.rawValue])
+        switch kind {
+        case .moveToFolder, .copyToFolder, .syncToFolder:
+            return [ActionParam.destination: .text, ActionParam.onConflict: conflict]
+        case .sortIntoSubfolder:
+            return [ActionParam.subfolder: .text, ActionParam.onConflict: conflict]
+        case .uncompress:
+            return [ActionParam.onConflict: conflict]
+        case .syncFolders:
+            return [ActionParam.destination: .text,
+                    ActionParam.syncDirection: .choice(SyncDirection.allCases.map(\.rawValue)),
+                    ActionParam.syncDeletePolicy: .choice(SyncDeletePolicy.allCases.map(\.rawValue))]
+        case .rename:
+            return [ActionParam.pattern: .text, ActionParam.cleanFileName: .bool]
+        case .upload: return [ActionParam.uploadURL: .text]
+        case .addTag, .removeTag: return [ActionParam.tags: .list]
+        case .setColorLabel:
+            return [ActionParam.color: .choice(["", "gray", "green", "purple", "blue", "yellow", "red", "orange"])]
+        case .addComment: return [ActionParam.comment: .text]
+        case .runScript:
+            return [ActionParam.script: .text, ActionParam.scriptSource: scriptSource, ActionParam.scriptPath: .text,
+                    ActionParam.shell: .choice(ScriptShell.allCases.map(\.rawValue))]
+        case .runAppleScript, .runJavaScript:
+            return [ActionParam.script: .text, ActionParam.scriptSource: scriptSource, ActionParam.scriptPath: .text]
+        case .runShortcut:
+            return [ActionParam.shortcutName: .text,
+                    ActionParam.shortcutInputMode: .choice(ShortcutInputMode.allCases.map(\.rawValue))]
+        case .openApplication:
+            return [ActionParam.applicationPath: .text, ActionParam.passFileToApplication: .bool]
+        case .makeAlias: return [ActionParam.aliasDestination: .text]
+        case .importToLibrary:
+            return [ActionParam.libraryType: .choice(LibraryType.allCases.map(\.rawValue)), ActionParam.targetPlaylist: .text]
+        case .pause: return [ActionParam.pauseSeconds: .number]
+        case .displayNotification:
+            return [ActionParam.notificationTitle: .text, ActionParam.notificationBody: .text]
+        case .convertImage:
+            return [ActionParam.imageFormat: .choice(ImageFormat.allCases.map(\.rawValue)),
+                    ActionParam.maxDimension: .textOrNumber, ActionParam.keepOriginal: .bool]
+        case .compressPDF, .makeSearchablePDF:
+            return [ActionParam.keepOriginal: .bool]
+        case .runAutomatorWorkflow: return [ActionParam.workflowPath: .text]
+        case .moveToTrash, .delete, .toggleExtension, .toggleLock, .archive, .open, .showInFinder,
+             .runRulesOnFolderContents, .ignore:
+            return [:]
+        }
+    }
+
+    /// Why `value` doesn't fit `expected`, or nil when it does.
+    static func paramValueProblem(_ value: JSONValue, _ expected: ParamValue) -> String? {
+        switch (expected, value) {
+        case (.text, .string), (.bool, .bool), (.number, .number), (.textOrNumber, .string), (.textOrNumber, .number): return nil
+        case (.text, _): return "must be text"
+        case (.textOrNumber, _): return "must be text or a number"
+        case (.bool, _): return "must be true or false"
+        case (.number, _): return "must be a number"
+        case (.list, .array(let items)):
+            return items.allSatisfy { $0.stringValue != nil } ? nil : "must be a list of names"
+        case (.list, _): return "must be a list of names"
+        case (.choice(let options), .string(let text)) where options.contains(text): return nil
+        case (.choice(let options), _):
+            return "must be one of " + options.map { $0.isEmpty ? "\"\"" : $0 }.joined(separator: ", ")
+        }
+    }
+
+    /// Models often quote booleans and numbers ("true", "5"); store them
+    /// as the type Forel reads, so they work instead of being rejected.
+    static func normalizedParams(_ params: JSONValue, kind: ActionKind) -> JSONValue {
+        guard case .object(var dict) = params else { return params }
+        for (key, expected) in acceptedParams(kind) {
+            guard case .string(let raw)? = dict[key] else { continue }
+            let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            switch expected {
+            case .bool where ["true", "false"].contains(text.lowercased()):
+                dict[key] = .bool(text.lowercased() == "true")
+            case .number:
+                if let number = Double(text) { dict[key] = .number(number) }
+            default: break
+            }
+        }
+        return .object(dict)
+    }
+
+    /// A param an action doesn't read is silently ignored, and one with the
+    /// wrong kind of value falls back to a default — either way the rule
+    /// wouldn't do what the service meant. What the user's own rule already
+    /// had on an action of the same kind is left alone.
+    static func paramProblems(in actions: [ForelCore.Action], base: Rule) -> [String] {
+        var existing: [String: [JSONValue]] = [:]
+        for action in base.actions {
+            guard case .object(let dict) = action.params else { continue }
+            for (key, value) in dict { existing["\(action.kind.rawValue).\(key)", default: []].append(value) }
+        }
+        var problems: [String] = []
+        for action in actions {
+            guard case .object(let dict) = action.params else { continue }
+            let accepted = acceptedParams(action.kind)
+            for key in dict.keys.sorted() {
+                guard let value = dict[key] else { continue }
+                let had = existing["\(action.kind.rawValue).\(key)"]
+                guard let expected = accepted[key] else {
+                    if had != nil { continue }
+                    let names = accepted.keys.sorted()
+                    problems.append("\(action.kind.label) has no “\(key)” param" + (names.isEmpty ? "; it takes none." : "; its params are " + names.joined(separator: ", ") + "."))
+                    continue
+                }
+                if case .null = value { continue }
+                if had?.contains(value) == true { continue }
+                if let problem = paramValueProblem(value, expected) {
+                    problems.append("\(action.kind.label): “\(key)” \(problem).")
+                }
+            }
+        }
+        return problems
     }
 
     // MARK: Tokens
@@ -384,11 +520,12 @@ public enum RuleReviewer {
         case .convertImage:
             return "image_format: " + ImageFormat.allCases.map(\.rawValue).joined(separator: "|") + "; max_dimension: pixels as text or \"\"; keep_original: bool"
         case .runAutomatorWorkflow: return "workflow_path: path of the .workflow"
-        case .uncompress: return "no required params"
+        case .uncompress: return conflict
         case .runRulesOnFolderContents: return "no params; runs this folder's rules on the contents of a matched subfolder"
         case .ignore: return "no params; stops later rules from acting on the file"
         case .delete: return "no params; deletes permanently, cannot be undone"
-        case .moveToTrash, .toggleExtension, .toggleLock, .archive, .open, .showInFinder, .compressPDF, .makeSearchablePDF:
+        case .compressPDF, .makeSearchablePDF: return "keep_original: bool (default true)"
+        case .moveToTrash, .toggleExtension, .toggleLock, .archive, .open, .showInFinder:
             return "no params"
         }
     }
@@ -436,7 +573,7 @@ public enum RuleReviewer {
         Conditions (kind (label): operators; value):
         \(conditionCatalog)
 
-        Actions (kind (label): params):
+        Actions (kind (label): params). These are the only params; Forel rejects any other name and values of the wrong type:
         \(actionCatalog)
         """
     }
