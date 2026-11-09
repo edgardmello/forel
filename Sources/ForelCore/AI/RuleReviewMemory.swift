@@ -192,13 +192,16 @@ public enum RuleReviewMemory {
         excluding: String? = nil,
         limit: Int = maximumCases
     ) -> [RuleReviewRecord] {
-        records
-            .filter { $0.id != excluding && $0.isInformative }
-            .map { (record: $0, score: score($0, rule: rule, folderPath: folderPath, goal: goal)) }
-            .filter { $0.score >= 3 }
-            .sorted { $0.score != $1.score ? $0.score > $1.score : $0.record.updatedAt > $1.record.updatedAt }
-            .prefix(limit)
-            .map(\.record)
+        var scored: [(record: RuleReviewRecord, score: Int)] = []
+        for record in records where record.id != excluding && record.isInformative {
+            let value = score(record, rule: rule, folderPath: folderPath, goal: goal)
+            if value >= 3 { scored.append((record, value)) }
+        }
+        scored.sort { lhs, rhs in
+            if lhs.score != rhs.score { return lhs.score > rhs.score }
+            return lhs.record.updatedAt > rhs.record.updatedAt
+        }
+        return Array(scored.prefix(limit).map { $0.record })
     }
 
     static func outcomeLine(_ record: RuleReviewRecord) -> String? {
