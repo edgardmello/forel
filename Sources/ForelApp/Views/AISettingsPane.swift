@@ -16,6 +16,8 @@
 
 
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import ForelCore
 
 /// Settings → AI: "Generate Code" in script actions and "Review with AI" in
@@ -27,6 +29,8 @@ struct AISettingsPane: View {
     @State private var keySaved = false
     @State private var showingModels = false
     @State private var confirmingForget = false
+    /// What the last export or import did, or why it failed.
+    @State private var transferStatus: (text: String, failed: Bool)?
 
     var body: some View {
         Group {
@@ -133,8 +137,20 @@ struct AISettingsPane: View {
                                 .font(.system(size: 11))
                                 .foregroundStyle(ForelTheme.secondaryText)
                             Spacer()
+                            Button("Import…", action: importReviews)
+                                .help("Add the reviews exported from another Mac; ones this Mac already has keep their newest version")
+                            Button("Export…", action: exportReviews)
+                                .disabled(model.rememberedReviewCount == 0)
+                                .help("Save the remembered reviews to a file, to import them on another Mac")
                             Button("Forget Reviews…") { confirmingForget = true }
                                 .disabled(model.rememberedReviewCount == 0)
+                        }
+                        if let transferStatus {
+                            Text(transferStatus.text)
+                                .font(.system(size: 11))
+                                .foregroundStyle(transferStatus.failed ? ForelTheme.danger : ForelTheme.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
                         }
                     }
                     .padding(14)
@@ -173,6 +189,40 @@ struct AISettingsPane: View {
         .onAppear(perform: loadKey)
         .onChange(of: model.aiSettings.provider) { _ in loadKey() }
         .onChange(of: apiKey) { _ in keySaved = apiKey == AIKeychain.key(for: model.aiSettings.provider.rawValue) && !apiKey.isEmpty }
+    }
+
+    private func exportReviews() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: RuleReviewMemoryTransfer.fileExtension) ?? .json]
+        panel.nameFieldStringValue = "Forel Review Memory.\(RuleReviewMemoryTransfer.fileExtension)"
+        panel.prompt = "Export"
+        panel.message = "The file holds your review goals, replies and rules (without upload passwords). Keep it private."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let count = try model.exportReviews(to: url)
+            transferStatus = ("Exported \(count) review\(count == 1 ? "" : "s") to “\(url.lastPathComponent)”. On your other Mac, choose Import… here.", false)
+        } catch {
+            transferStatus = ("Couldn't export the reviews: \(error.localizedDescription)", true)
+        }
+    }
+
+    private func importReviews() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [UTType(filenameExtension: RuleReviewMemoryTransfer.fileExtension) ?? .json, .json]
+        panel.prompt = "Import"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let count = try model.importReviews(from: url)
+            transferStatus = (count == 0
+                ? "Nothing new: this Mac already remembers every review in “\(url.lastPathComponent)”."
+                : "Imported \(count) review\(count == 1 ? "" : "s") from “\(url.lastPathComponent)”.", false)
+        } catch let error as RuleReviewMemoryTransfer.ImportError {
+            transferStatus = (error.description, true)
+        } catch {
+            transferStatus = ("Couldn't import the reviews: \(error.localizedDescription)", true)
+        }
     }
 
     private func row<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

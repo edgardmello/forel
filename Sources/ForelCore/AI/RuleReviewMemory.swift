@@ -264,3 +264,49 @@ public enum RuleReviewMemory {
         """ + cases.joined(separator: "\n\n")
     }
 }
+
+// MARK: - Moving it to another Mac
+
+/// The file Settings → AI → Review Memory exports and imports, so the
+/// memory of one Mac can be used on another.
+public enum RuleReviewMemoryTransfer {
+    public static let fileExtension = "forelmemory"
+    static let format = "forel-review-memory"
+    static let version = 1
+
+    public struct ImportError: Error, Equatable, CustomStringConvertible {
+        public let description: String
+    }
+
+    private struct File: Codable {
+        var format: String
+        var version: Int
+        var exportedAt: Date
+        var records: [RuleReviewRecord]
+    }
+
+    public static func export(_ records: [RuleReviewRecord], now: Date = Date()) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(File(format: format, version: version, exportedAt: now, records: records))
+    }
+
+    /// The reviews in an exported file. Throws, explaining why, for a file
+    /// that isn't a Forel review memory or comes from a newer Forel.
+    public static func records(from data: Data) throws -> [RuleReviewRecord] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let header = try? decoder.decode([String: JSONValue].self, from: data),
+              header["format"]?.stringValue == format else {
+            throw ImportError(description: "This file isn't a Forel review memory. Choose a .\(fileExtension) file exported from Settings → AI → Review Memory.")
+        }
+        if case .number(let fileVersion)? = header["version"], Int(fileVersion) > version {
+            throw ImportError(description: "This review memory was exported by a newer version of Forel. Update Forel on this Mac, then import it again.")
+        }
+        guard let file = try? decoder.decode(File.self, from: data) else {
+            throw ImportError(description: "The review memory file is damaged and can't be read.")
+        }
+        return file.records
+    }
+}

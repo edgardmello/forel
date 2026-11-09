@@ -154,4 +154,40 @@ struct RuleReviewMemoryTests {
         try db.deleteAllReviewRecords()
         #expect(try db.countReviewRecords() == 0)
     }
+
+    @Test func exportedMemoryImportsOnAnotherMacKeepingTheNewestVersion() throws {
+        let rule = invoiceRule()
+        let saved = try savedRecord(rule: rule, time: 0)
+        let other = RuleReviewRecord(rule: rule, folderPath: nil, goal: "other", review: review, now: at(50))
+        let data = try RuleReviewMemoryTransfer.export([saved, other], now: at(60))
+        #expect(!String(decoding: data, as: UTF8.self).contains("secret"))
+        #expect(try RuleReviewMemoryTransfer.records(from: data) == [saved, other])
+
+        // This Mac has an older version of `saved` and a newer one of `other`.
+        let db = try Database(path: ":memory:")
+        var olderSaved = saved
+        olderSaved.finish(.reviewed, now: at(-10))
+        try db.saveReviewRecord(RuleReviewRecord(id: saved.id, rule: rule, folderPath: nil, goal: "old", review: review, now: at(-10)))
+        var newerOther = other
+        newerOther.addReply("newer here", now: at(500))
+        try db.saveReviewRecord(newerOther)
+
+        #expect(try db.importReviewRecords(try RuleReviewMemoryTransfer.records(from: data)) == 1)
+        #expect(try db.getReviewRecord(id: saved.id) == saved)
+        #expect(try db.getReviewRecord(id: other.id) == newerOther)
+        #expect(try db.importReviewRecords([saved, other]) == 0)
+    }
+
+    @Test func importExplainsFilesItCantUse() throws {
+        #expect(throws: RuleReviewMemoryTransfer.ImportError.self) {
+            try RuleReviewMemoryTransfer.records(from: Data(#"{"rules": []}"#.utf8))
+        }
+        let newer = Data(#"{"format": "forel-review-memory", "version": 99, "records": []}"#.utf8)
+        do {
+            _ = try RuleReviewMemoryTransfer.records(from: newer)
+            Issue.record("expected an error")
+        } catch let error as RuleReviewMemoryTransfer.ImportError {
+            #expect(error.description.contains("newer version of Forel"))
+        }
+    }
 }

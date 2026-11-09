@@ -851,31 +851,57 @@ public final class Database: @unchecked Sendable {
     /// Saves `record`, replacing an earlier version of it, and forgets the
     /// oldest reviews beyond `RuleReviewMemory.maximumStoredRecords`.
     public func saveReviewRecord(_ record: RuleReviewRecord) throws {
-        let json = String(decoding: try Self.reviewRecordCoders().0.encode(record), as: UTF8.self)
         try transaction {
-            let stmt = try statement(
-                """
-                INSERT INTO rule_review_memory (id, rule_id, folder_path, outcome, record, created_at, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                ON CONFLICT(id) DO UPDATE SET
-                    rule_id = excluded.rule_id, folder_path = excluded.folder_path, outcome = excluded.outcome,
-                    record = excluded.record, updated_at = excluded.updated_at
-                """
-            )
-            stmt.bind(1, record.id)
-            stmt.bind(2, record.ruleId)
-            stmt.bind(3, record.folderPath)
-            stmt.bind(4, record.outcome.rawValue)
-            stmt.bind(5, json)
-            stmt.bind(6, ISO8601DateFormatter.forelUTC.string(from: record.createdAt))
-            stmt.bind(7, ISO8601DateFormatter.forelUTC.string(from: record.updatedAt))
-            try stmt.runToCompletion()
-            let prune = try statement(
-                "DELETE FROM rule_review_memory WHERE id NOT IN (SELECT id FROM rule_review_memory ORDER BY updated_at DESC, id LIMIT ?1)"
-            )
-            prune.bind(1, Int64(RuleReviewMemory.maximumStoredRecords))
-            try prune.runToCompletion()
+            try upsertReviewRecord(record)
+            try pruneReviewRecords()
         }
+    }
+
+    private func upsertReviewRecord(_ record: RuleReviewRecord) throws {
+        let json = String(decoding: try Self.reviewRecordCoders().0.encode(record), as: UTF8.self)
+        let stmt = try statement(
+            """
+            INSERT INTO rule_review_memory (id, rule_id, folder_path, outcome, record, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(id) DO UPDATE SET
+                rule_id = excluded.rule_id, folder_path = excluded.folder_path, outcome = excluded.outcome,
+                record = excluded.record, updated_at = excluded.updated_at
+            """
+        )
+        stmt.bind(1, record.id)
+        stmt.bind(2, record.ruleId)
+        stmt.bind(3, record.folderPath)
+        stmt.bind(4, record.outcome.rawValue)
+        stmt.bind(5, json)
+        stmt.bind(6, ISO8601DateFormatter.forelUTC.string(from: record.createdAt))
+        stmt.bind(7, ISO8601DateFormatter.forelUTC.string(from: record.updatedAt))
+        try stmt.runToCompletion()
+    }
+
+    private func pruneReviewRecords() throws {
+        let prune = try statement(
+            "DELETE FROM rule_review_memory WHERE id NOT IN (SELECT id FROM rule_review_memory ORDER BY updated_at DESC, id LIMIT ?1)"
+        )
+        prune.bind(1, Int64(RuleReviewMemory.maximumStoredRecords))
+        try prune.runToCompletion()
+    }
+
+    /// Adds reviews from another Mac. A review this Mac already has is
+    /// replaced only by a newer version of it; then the oldest beyond
+    /// `RuleReviewMemory.maximumStoredRecords` are forgotten. Returns how
+    /// many reviews were added or updated.
+    @discardableResult
+    public func importReviewRecords(_ records: [RuleReviewRecord]) throws -> Int {
+        var changed = 0
+        try transaction {
+            for record in records {
+                if let existing = try getReviewRecord(id: record.id), existing.updatedAt >= record.updatedAt { continue }
+                try upsertReviewRecord(record)
+                changed += 1
+            }
+            try pruneReviewRecords()
+        }
+        return changed
     }
 
     public func getReviewRecord(id: String) throws -> RuleReviewRecord? {

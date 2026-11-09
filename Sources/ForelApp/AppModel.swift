@@ -443,6 +443,23 @@ final class AppModel: ObservableObject {
         rememberReview(record)
     }
 
+    /// Writes every remembered review to `url`, for importing on another Mac.
+    /// Returns how many were exported.
+    func exportReviews(to url: URL) throws -> Int {
+        let records = try db.withLock { db in try db.getReviewRecords() }
+        try RuleReviewMemoryTransfer.export(records).write(to: url, options: .atomic)
+        return records.count
+    }
+
+    /// Merges the reviews exported from another Mac into this one's memory.
+    /// Returns how many were added or updated.
+    func importReviews(from url: URL) throws -> Int {
+        let records = try RuleReviewMemoryTransfer.records(from: Data(contentsOf: url))
+        let changed = try db.withLock { db in try db.importReviewRecords(records) }
+        rememberedReviewCount = db.withLock { db in (try? db.countReviewRecords()) ?? 0 }
+        return changed
+    }
+
     func forgetReviews() {
         db.withLock { db in try? db.deleteAllReviewRecords() }
         rememberedReviewCount = 0
