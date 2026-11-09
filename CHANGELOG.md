@@ -16,6 +16,7 @@ All notable changes to Forel are documented here. Format loosely follows
 - Opening Forel now brings its window to the front instead of leaving it behind other apps' windows, including when it was closed the last time Forel quit.
 
 ### Added
+- Review with AI in the rule editor (Settings → AI) checks a rule with your AI service and suggests fixes, faster or simpler ways to do the same, and entirely better approaches, in your Mac's language. You can say what the rule should achieve. When the service proposes a better version, it is shown next to the current rule and can be loaded into the editor with one click; nothing changes until you save. It sends the rule, the watched folder's path and the folder's other rules (upload passwords removed), never your files' names or contents.
 - What a shell script prints now appears in Activity, and a failing script shows its error message instead of only its exit status.
 - Shell scripts can run with Zsh or your own login shell (Options → Shell), which reads your profile so tools you set up in your PATH are found. Homebrew's folders are always on the PATH, so tools like exiftool or ffmpeg work without full paths. Shell scripts imported from Hazel keep the shell they used there.
 - Shell scripts get more variables besides `$FOREL_FILE`: `$FOREL_NAME`, `$FOREL_STEM`, `$FOREL_EXTENSION`, `$FOREL_DIR`, `$FOREL_FOLDER`, `$FOREL_RULE`, and `$FOREL_CAPTURE_<NAME>` for each named regex group.
