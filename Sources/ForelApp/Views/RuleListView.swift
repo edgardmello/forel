@@ -88,10 +88,10 @@ struct RuleListView: View {
                         folderPath: model.folders.first { $0.id == rule.folderId }?.path,
                         otherRules: model.rules.filter { $0.folderId == rule.folderId && $0.id != rule.id },
                         settings: model.aiSettings,
-                        onEdited: { edit, count in
+                        onEdited: { edit, count, reviewId in
                             // The rewritten rule opens in the editor, where
                             // it is checked and saved like any other change.
-                            editingAIEdit = AIEditState(previous: rule, edit: edit, count: count)
+                            editingAIEdit = AIEditState(previous: rule, edit: edit, count: count, reviewId: reviewId)
                             reviewingRule = nil
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                                 editingRule = edit.rule

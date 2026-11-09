@@ -16,6 +16,8 @@
 
 
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import ForelCore
 
 /// Settings → AI: "Generate Code" in script actions and "Review with AI" in
@@ -26,6 +28,9 @@ struct AISettingsPane: View {
     @State private var apiKey = ""
     @State private var keySaved = false
     @State private var showingModels = false
+    @State private var confirmingForget = false
+    /// What the last export or import did, or why it failed.
+    @State private var transferStatus: (text: String, failed: Bool)?
 
     var body: some View {
         Group {
@@ -106,6 +111,60 @@ struct AISettingsPane: View {
                     .padding(14)
                 }
 
+                SectionLabel(title: "Review Memory")
+                GlassCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Remember reviews")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(ForelTheme.primaryText)
+                                Text("Forel keeps, on this Mac, what you asked for in each Review with AI, the suggestions you applied or turned down, your replies and the rule you saved. New reviews of similar rules send the most relevant of these along, so the AI follows your preferences and reuses what worked.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(ForelTheme.secondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
+                            Toggle("Remember reviews", isOn: Binding(get: { model.rememberReviews }, set: model.setRememberReviews))
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                        }
+                        HStack {
+                            Text(model.rememberedReviewCount == 0
+                                 ? "No reviews remembered."
+                                 : "\(model.rememberedReviewCount) review\(model.rememberedReviewCount == 1 ? "" : "s") remembered (up to \(RuleReviewMemory.maximumStoredRecords); the oldest are forgotten first).")
+                                .font(.system(size: 11))
+                                .foregroundStyle(ForelTheme.secondaryText)
+                            Spacer()
+                            Button("Import…", action: importReviews)
+                                .help("Add the reviews exported from another Mac; ones this Mac already has keep their newest version")
+                            Button("Export…", action: exportReviews)
+                                .disabled(model.rememberedReviewCount == 0)
+                                .help("Save the remembered reviews to a file, to import them on another Mac")
+                            Button("Forget Reviews…") { confirmingForget = true }
+                                .disabled(model.rememberedReviewCount == 0)
+                        }
+                        if let transferStatus {
+                            Text(transferStatus.text)
+                                .font(.system(size: 11))
+                                .foregroundStyle(transferStatus.failed ? ForelTheme.danger : ForelTheme.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .padding(14)
+                }
+                .alert(
+                    "Forget \(model.rememberedReviewCount) remembered review\(model.rememberedReviewCount == 1 ? "" : "s")?",
+                    isPresented: $confirmingForget
+                ) {
+                    Button("Forget Reviews", role: .destructive) { model.forgetReviews() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Review with AI will no longer know the goals, replies and decisions of your earlier reviews, and can't be given them back. Your rules aren't changed.")
+                }
+
                 SectionLabel(title: "Privacy")
                 GlassCard {
                     Text("""
@@ -115,7 +174,7 @@ struct AISettingsPane: View {
 
                     When you press Review with AI, Forel sends that rule (its conditions, actions, folder paths and scripts, \
                     with upload passwords removed), the watched folder's path, the folder's other rules and your macOS \
-                    version, the goal you describe for the rule, and, when you apply suggestions or reply to the AI, the ones you chose and what you wrote. It never sends the names or contents of your files.
+                    version, the goal you describe for the rule, and, when you apply suggestions or reply to the AI, the ones you chose and what you wrote. With Remember reviews on, it also sends what you decided in up to four similar earlier reviews: their goals, the titles of the suggestions you applied or turned down, your replies and the rules you saved, which can include other folders' paths. It never sends the names or contents of your files.
 
                     The API key is kept in your Keychain. Read a generated script or a suggested rule before saving: it runs with your permissions.
                     """)
@@ -130,6 +189,40 @@ struct AISettingsPane: View {
         .onAppear(perform: loadKey)
         .onChange(of: model.aiSettings.provider) { _ in loadKey() }
         .onChange(of: apiKey) { _ in keySaved = apiKey == AIKeychain.key(for: model.aiSettings.provider.rawValue) && !apiKey.isEmpty }
+    }
+
+    private func exportReviews() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: RuleReviewMemoryTransfer.fileExtension) ?? .json]
+        panel.nameFieldStringValue = "Forel Review Memory.\(RuleReviewMemoryTransfer.fileExtension)"
+        panel.prompt = "Export"
+        panel.message = "The file holds your review goals, replies and rules (without upload passwords). Keep it private."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let count = try model.exportReviews(to: url)
+            transferStatus = ("Exported \(count) review\(count == 1 ? "" : "s") to “\(url.lastPathComponent)”. On your other Mac, choose Import… here.", false)
+        } catch {
+            transferStatus = ("Couldn't export the reviews: \(error.localizedDescription)", true)
+        }
+    }
+
+    private func importReviews() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [UTType(filenameExtension: RuleReviewMemoryTransfer.fileExtension) ?? .json, .json]
+        panel.prompt = "Import"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let count = try model.importReviews(from: url)
+            transferStatus = (count == 0
+                ? "Nothing new: this Mac already remembers every review in “\(url.lastPathComponent)”."
+                : "Imported \(count) review\(count == 1 ? "" : "s") from “\(url.lastPathComponent)”.", false)
+        } catch let error as RuleReviewMemoryTransfer.ImportError {
+            transferStatus = (error.description, true)
+        } catch {
+            transferStatus = ("Couldn't import the reviews: \(error.localizedDescription)", true)
+        }
     }
 
     private func row<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

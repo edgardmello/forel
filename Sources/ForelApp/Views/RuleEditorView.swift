@@ -29,10 +29,13 @@ struct AIEditState {
     let count: Int
     let explanation: String?
     let addsRiskyActions: Bool
+    /// The remembered review the edit came from, if Remember Reviews is on.
+    let reviewId: String?
 
-    init(previous: Rule, edit: RuleEdit, count: Int) {
+    init(previous: Rule, edit: RuleEdit, count: Int, reviewId: String? = nil) {
         self.previous = previous
         self.count = count
+        self.reviewId = reviewId
         explanation = edit.explanation
         // Only warn about scripts, deletions and uploads the AI added or changed.
         let risky: Set<ActionKind> = [.runScript, .runAppleScript, .runJavaScript, .delete, .upload]
@@ -53,6 +56,9 @@ struct RuleEditorView: View {
     /// Set after "Review with AI" edited the draft, so the editor can say so
     /// and offer to go back.
     @State private var aiEdit: AIEditState?
+    /// The remembered review behind the draft, kept when the notice is
+    /// hidden, so Save, Undo or Cancel can record how the review ended.
+    @State private var aiReviewId: String?
     @State private var showingJSON = false
     @EnvironmentObject private var model: AppModel
     private let preferredHeight: CGFloat
@@ -64,6 +70,7 @@ struct RuleEditorView: View {
     init(rule: Rule, aiEdit: AIEditState? = nil, preferredHeight: CGFloat = 680, onSave: @escaping (Rule) -> Void, onCancel: @escaping () -> Void) {
         _rule = State(initialValue: rule)
         _aiEdit = State(initialValue: aiEdit)
+        _aiReviewId = State(initialValue: aiEdit?.reviewId)
         self.preferredHeight = max(680, preferredHeight)
         self.onSave = onSave
         self.onCancel = onCancel
@@ -99,6 +106,7 @@ struct RuleEditorView: View {
                         rule = aiEdit.previous
                         hasTestedRule = false
                         self.aiEdit = nil
+                        finishReview(.undone)
                     },
                     onDismiss: { self.aiEdit = nil }
                 )
@@ -254,8 +262,11 @@ struct RuleEditorView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(ForelTheme.primaryText)
                 Spacer()
-                ReviewRuleButton(rule: rule) { edit, count in
-                    aiEdit = AIEditState(previous: rule, edit: edit, count: count)
+                ReviewRuleButton(rule: rule) { edit, count, reviewId in
+                    // A new review replaces one whose rule was never saved.
+                    finishReview(.discarded)
+                    aiEdit = AIEditState(previous: rule, edit: edit, count: count, reviewId: reviewId)
+                    aiReviewId = reviewId
                     rule = edit.rule
                     hasTestedRule = false
                     showValidationErrors = false
@@ -264,13 +275,18 @@ struct RuleEditorView: View {
                 Button("Test", action: runDryRun)
                     .buttonStyle(SecondaryButtonStyle())
                     .disabled(model.isTestingRule || rule.name.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button("Cancel", action: onCancel).buttonStyle(SecondaryButtonStyle())
+                Button("Cancel") {
+                    finishReview(.discarded)
+                    onCancel()
+                }
+                .buttonStyle(SecondaryButtonStyle())
                 Button("Save") {
                     if hasValidationErrors {
                         revealValidationErrors()
                     } else {
                         showValidationErrors = false
                         errorDismissTask?.cancel()
+                        finishReview(.saved, savedRule: rule)
                         onSave(rule)
                     }
                 }
@@ -290,6 +306,13 @@ struct RuleEditorView: View {
     /// `AppModel.testRule`). A rule that wouldn't pass validation can't be
     /// meaningfully tested, so invalid drafts surface the same banner Save
     /// shows instead.
+    /// Records how the Review with AI session behind the draft ended.
+    private func finishReview(_ outcome: RuleReviewRecord.Outcome, savedRule: Rule? = nil) {
+        guard let id = aiReviewId else { return }
+        aiReviewId = nil
+        model.finishReview(id, outcome, savedRule: savedRule)
+    }
+
     private func runDryRun() {
         if hasValidationErrors {
             revealValidationErrors()
