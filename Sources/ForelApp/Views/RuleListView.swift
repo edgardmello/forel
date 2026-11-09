@@ -22,6 +22,10 @@ import ForelCore
 struct RuleListView: View {
     @EnvironmentObject var model: AppModel
     @State private var editingRule: Rule?
+    /// Set when the editor opens on a rule Review with AI rewrote from the
+    /// rule list's context menu.
+    @State private var editingAIEdit: AIEditState?
+    @State private var reviewingRule: Rule?
     @State private var searchText = ""
     @State private var isSelecting = false
     @State private var selectedRuleIds: Set<String> = []
@@ -70,13 +74,31 @@ struct RuleListView: View {
     var body: some View {
         GeometryReader { proxy in
             content
-                .sheet(item: $editingRule) { rule in
-                    RuleEditorView(rule: rule, preferredHeight: editorHeight(for: proxy.size.height)) { saved in
+                .sheet(item: $editingRule, onDismiss: { editingAIEdit = nil }) { rule in
+                    RuleEditorView(rule: rule, aiEdit: editingAIEdit, preferredHeight: editorHeight(for: proxy.size.height)) { saved in
                         model.saveRule(saved)
                         editingRule = nil
                     } onCancel: {
                         editingRule = nil
                     }
+                }
+                .sheet(item: $reviewingRule) { rule in
+                    RuleReviewSheet(
+                        rule: rule,
+                        folderPath: model.folders.first { $0.id == rule.folderId }?.path,
+                        otherRules: model.rules.filter { $0.folderId == rule.folderId && $0.id != rule.id },
+                        settings: model.aiSettings,
+                        onEdited: { edit, count in
+                            // The rewritten rule opens in the editor, where
+                            // it is checked and saved like any other change.
+                            editingAIEdit = AIEditState(previous: rule, edit: edit, count: count)
+                            reviewingRule = nil
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                                editingRule = edit.rule
+                            }
+                        },
+                        onClose: { reviewingRule = nil }
+                    )
                 }
                 .sheet(item: $model.previewResult) { result in
                     PreviewSheet(result: result) { model.previewResult = nil }
@@ -120,6 +142,7 @@ struct RuleListView: View {
                     selection: $tableSelection,
                     showsInspector: $showsInspector,
                     onEdit: { editingRule = $0 },
+                    onReview: { reviewingRule = $0 },
                     onDelete: { targets in
                         selectedRuleIds = Set(targets.map(\.id))
                         isConfirmingBulkDelete = true
@@ -368,6 +391,14 @@ struct RuleListView: View {
             editingRule = rule
         } label: {
             Label("Edit", systemImage: "pencil")
+        }
+
+        if model.aiSettings.enabled {
+            Button {
+                reviewingRule = rule
+            } label: {
+                Label("Review with AI…", systemImage: "sparkles")
+            }
         }
 
         Button {

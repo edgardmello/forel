@@ -260,7 +260,8 @@ struct RuleBlueprint: Codable, Equatable {
 /// improvements. Then the service rewrites the rule with the suggestions
 /// the user accepted. What is sent: the rule (its conditions, actions,
 /// paths and embedded scripts, with upload passwords removed), the watched
-/// folder's path, the folder's other rules (analysis only) and the macOS
+/// folder's path, the user's optional description of the rule's goal, the
+/// folder's other rules (analysis only), the user's replies and the macOS
 /// version — never file names or contents.
 public enum RuleReviewer {
     /// Most other rules of the folder sent along for overlap checks.
@@ -390,8 +391,8 @@ public enum RuleReviewer {
         """
         You review file-automation rules for Forel. \(forelGuide(macOSVersion: macOSVersion))
 
-        Your job: work out what the rule is meant to achieve from its name, its folder, its conditions and its actions, \
-        then check it. Look for:
+        Your job: when the user says what the rule should achieve, judge the rule against that goal; otherwise work out \
+        what it is meant to achieve from its name, its folder, its conditions and its actions. Then check it. Look for:
         1. Mistakes: conditions that can never match or match more than intended, wrong order of actions, loops, invalid values.
         2. Safety: permanent deletions, overwriting files, scripts that could lose data.
         3. Efficiency: slow conditions where a cheap one is enough, scripts that a built-in action replaces, redundant steps.
@@ -433,9 +434,16 @@ public enum RuleReviewer {
         return String(decoding: try encoder.encode(value), as: UTF8.self)
     }
 
-    public static func reviewUserMessage(rule: Rule, folderPath: String?, otherRules: [Rule]) throws -> String {
+    /// The user's own words on what the rule should achieve, when given.
+    static func goalLine(_ goal: String) -> String? {
+        let trimmed = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : "What this rule should achieve, in my words: \(trimmed)"
+    }
+
+    public static func reviewUserMessage(rule: Rule, folderPath: String?, otherRules: [Rule], goal: String = "") throws -> String {
         var parts: [String] = []
         if let folderPath, !folderPath.isEmpty { parts.append("Watched folder: \(folderPath)") }
+        if let goal = goalLine(goal) { parts.append(goal) }
         parts.append("Rule to review:\n" + (try encodedJSON(RuleBlueprint(rule))))
         let siblings = otherRules.filter { $0.id != rule.id }.prefix(maximumSiblingRules)
         if !siblings.isEmpty {
@@ -444,9 +452,10 @@ public enum RuleReviewer {
         return parts.joined(separator: "\n\n")
     }
 
-    public static func editUserMessage(rule: Rule, folderPath: String?, suggestions: [RuleReviewSuggestion]) throws -> String {
+    public static func editUserMessage(rule: Rule, folderPath: String?, suggestions: [RuleReviewSuggestion], goal: String = "") throws -> String {
         var parts: [String] = []
         if let folderPath, !folderPath.isEmpty { parts.append("Watched folder: \(folderPath)") }
+        if let goal = goalLine(goal) { parts.append(goal) }
         parts.append("Rule to edit:\n" + (try encodedJSON(RuleBlueprint(rule))))
         let accepted = suggestions.enumerated().map { index, suggestion in
             "\(index + 1). \(suggestion.title)" + (suggestion.detail.isEmpty ? "" : ": \(suggestion.detail)")
@@ -470,12 +479,13 @@ public enum RuleReviewer {
         rule: Rule,
         folderPath: String?,
         otherRules: [Rule],
+        goal: String = "",
         language: String = preferredLanguageName(),
         macOSVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
     ) throws -> RuleReviewConversation {
         RuleReviewConversation(mode: .review, messages: [
             .init(role: "system", content: reviewSystemPrompt(language: language, macOSVersion: macOSVersion)),
-            .init(role: "user", content: try reviewUserMessage(rule: rule, folderPath: folderPath, otherRules: otherRules)),
+            .init(role: "user", content: try reviewUserMessage(rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal)),
         ])
     }
 
@@ -483,13 +493,14 @@ public enum RuleReviewer {
         rule: Rule,
         folderPath: String?,
         suggestions: [RuleReviewSuggestion],
+        goal: String = "",
         language: String = preferredLanguageName(),
         macOSVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
     ) throws -> RuleReviewConversation {
         guard !suggestions.isEmpty else { throw ScriptGenerationError("Choose at least one suggestion to apply.") }
         return RuleReviewConversation(mode: .edit, messages: [
             .init(role: "system", content: editSystemPrompt(language: language, macOSVersion: macOSVersion)),
-            .init(role: "user", content: try editUserMessage(rule: rule, folderPath: folderPath, suggestions: suggestions)),
+            .init(role: "user", content: try editUserMessage(rule: rule, folderPath: folderPath, suggestions: suggestions, goal: goal)),
         ])
     }
 
@@ -558,13 +569,14 @@ public enum RuleReviewer {
         rule: Rule,
         folderPath: String?,
         otherRules: [Rule],
+        goal: String = "",
         settings: AISettings,
         apiKey: String,
         language: String = preferredLanguageName(),
         macOSVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
     ) throws -> URLRequest {
         try Self.request(
-            for: reviewConversation(rule: rule, folderPath: folderPath, otherRules: otherRules, language: language, macOSVersion: macOSVersion),
+            for: reviewConversation(rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal, language: language, macOSVersion: macOSVersion),
             settings: settings,
             apiKey: apiKey
         )
@@ -575,13 +587,14 @@ public enum RuleReviewer {
         rule: Rule,
         folderPath: String?,
         suggestions: [RuleReviewSuggestion],
+        goal: String = "",
         settings: AISettings,
         apiKey: String,
         language: String = preferredLanguageName(),
         macOSVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
     ) throws -> URLRequest {
         try Self.request(
-            for: editConversation(rule: rule, folderPath: folderPath, suggestions: suggestions, language: language, macOSVersion: macOSVersion),
+            for: editConversation(rule: rule, folderPath: folderPath, suggestions: suggestions, goal: goal, language: language, macOSVersion: macOSVersion),
             settings: settings,
             apiKey: apiKey
         )
@@ -720,11 +733,12 @@ public enum RuleReviewer {
         rule: Rule,
         folderPath: String?,
         otherRules: [Rule],
+        goal: String = "",
         settings: AISettings,
         apiKey: String,
         session: URLSession = .shared
     ) async throws -> (RuleReview, RuleReviewConversation) {
-        var conversation = try reviewConversation(rule: rule, folderPath: folderPath, otherRules: otherRules)
+        var conversation = try reviewConversation(rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal)
         let content = try await send(conversation, settings: settings, apiKey: apiKey, session: session)
         let result = try Self.review(fromContent: content)
         conversation.messages.append(.init(role: "assistant", content: content))
@@ -736,11 +750,12 @@ public enum RuleReviewer {
         rule: Rule,
         folderPath: String?,
         suggestions: [RuleReviewSuggestion],
+        goal: String = "",
         settings: AISettings,
         apiKey: String,
         session: URLSession = .shared
     ) async throws -> (RuleEdit, RuleReviewConversation) {
-        var conversation = try editConversation(rule: rule, folderPath: folderPath, suggestions: suggestions)
+        var conversation = try editConversation(rule: rule, folderPath: folderPath, suggestions: suggestions, goal: goal)
         let content = try await send(conversation, settings: settings, apiKey: apiKey, session: session)
         let result = try Self.edit(fromContent: content, rule: rule)
         conversation.messages.append(.init(role: "assistant", content: content))
