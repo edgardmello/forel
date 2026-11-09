@@ -223,6 +223,62 @@ struct RuleReviewerTests {
         }
     }
 
+    @Test func jsonViewShowsTheCompactRuleWithoutIDsOrUploadPasswords() throws {
+        let rule = sampleRule()
+        let json = RuleReviewer.json(for: rule)
+        #expect(json.contains("\"kind\" : \"move_to_folder\""))
+        #expect(json.contains("/Users/me/Invoices"))
+        #expect(json.contains("\"recursionDepth\" : 0"))
+        #expect(!json.contains(rule.id))
+        #expect(!json.contains("secret"))
+        // It's the same format an edit is read back from.
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        var changed = object
+        changed["recursionDepth"] = 1
+        let content = String(decoding: try JSONSerialization.data(withJSONObject: ["rule": changed]), as: UTF8.self)
+        #expect(try RuleReviewer.edit(fromContent: content, rule: rule).rule.recursionDepth == 1)
+    }
+
+    @Test func repliesContinueTheConversationInOrder() throws {
+        let rule = sampleRule()
+        let settings = AISettings(enabled: true, provider: .deepseek)
+        var review = try RuleReviewer.reviewConversation(rule: rule, folderPath: nil, otherRules: [], language: "English", macOSVersion: "26.0")
+        review.messages.append(.init(role: "assistant", content: #"{"summary": "OK", "suggestions": []}"#))
+        let next = try RuleReviewer.appending("  keep the upload, but only for PDFs  ", to: review)
+        #expect(next.mode == .review)
+        #expect(next.messages.map(\.role) == ["system", "user", "assistant", "user"])
+        let last = try #require(next.messages.last?.content)
+        #expect(last.contains("My reply to your review: keep the upload, but only for PDFs"))
+        #expect(last.contains("full, updated list of suggestions"))
+
+        let request = try RuleReviewer.request(for: next, settings: settings, apiKey: "sk-test")
+        let messages = try #require(try body(request)["messages"] as? [[String: String]])
+        #expect(messages.map { $0["role"] ?? "" } == ["system", "user", "assistant", "user"])
+        #expect(messages[2]["content"] == #"{"summary": "OK", "suggestions": []}"#)
+
+        let suggestion = RuleReviewSuggestion(id: 0, category: .other, title: "x", detail: "")
+        let edit = try RuleReviewer.editConversation(rule: rule, folderPath: nil, suggestions: [suggestion])
+        let editReply = try RuleReviewer.appending("why skip?", to: edit)
+        #expect(editReply.messages.last?.content.contains("My reply about the rule you wrote: why skip?") == true)
+
+        #expect(throws: ScriptGenerationError.self) { try RuleReviewer.appending("   ", to: review) }
+    }
+
+    @Test func repliesAreReadInTheConversationsMode() throws {
+        let rule = sampleRule()
+        let reviewed = try RuleReviewer.parseReply(#"{"summary": "Better now.", "suggestions": [{"title": "Add a tag"}]}"#, mode: .review, rule: rule)
+        guard case .review(let review) = reviewed else { Issue.record("expected a review"); return }
+        #expect(review.suggestions.map(\.title) == ["Add a tag"])
+
+        // A reply about the written rule may keep it as it is: that's an
+        // answer, not a failure.
+        let unchanged = #"{"rule": \#(RuleReviewer.json(for: rule)), "explanation": "Skipping avoids overwriting."}"#
+        let answered = try RuleReviewer.parseReply(unchanged, mode: .edit, rule: rule)
+        guard case .edit(let edit) = answered else { Issue.record("expected an edit"); return }
+        #expect(edit.explanation == "Skipping avoids overwriting.")
+        #expect(edit.rule.actions[1].params[ActionParam.uploadURL]?.stringValue == "sftp://me:secret@host.test/in/")
+    }
+
     @Test func languageComesFromThePreferredLanguages() {
         #expect(RuleReviewer.preferredLanguageName(["pt-BR"]) == "Portuguese")
         #expect(RuleReviewer.preferredLanguageName(["en-US"]) == "English")

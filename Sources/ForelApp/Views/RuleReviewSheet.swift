@@ -52,11 +52,12 @@ struct ReviewRuleButton: View {
     }
 }
 
-/// Analyzes the rule as it stands in the editor as soon as it opens, lists
-/// the suggestions (all chosen by default), and has the service rewrite the
-/// rule with the chosen ones. The rewritten rule only replaces the editor's
-/// draft, so it still has to be saved, and Cancel in the editor throws it
-/// away.
+/// Analyzes the rule as it stands in the editor as soon as it opens and
+/// lists the suggestions (all chosen by default). The user can answer the
+/// service with new directions or ideas, which updates the suggestions, then
+/// have it write the rule with the chosen ones. The written rule is shown as
+/// JSON and can be discussed the same way before it replaces the editor's
+/// draft, which still has to be saved: Cancel in the editor throws it away.
 struct RuleReviewSheet: View {
     let rule: Rule
     let folderPath: String?
@@ -65,10 +66,19 @@ struct RuleReviewSheet: View {
     let onEdited: (RuleEdit, Int) -> Void
     let onClose: () -> Void
 
-    private enum Phase { case analyzing, editing }
+    private enum Phase { case analyzing, editing, replying }
 
     @State private var review: RuleReview?
+    @State private var reviewConversation: RuleReviewConversation?
+    @State private var edit: RuleEdit?
+    @State private var editConversation: RuleReviewConversation?
+    /// Whether the rule the service wrote is on screen (instead of the
+    /// suggestions it was written from).
+    @State private var showingEdit = false
+    @State private var appliedCount = 0
     @State private var chosen: Set<Int> = []
+    @State private var replyText = ""
+    @State private var lastReply: String?
     @State private var error: String?
     @State private var phase: Phase?
     @State private var task: Task<Void, Never>?
@@ -77,12 +87,18 @@ struct RuleReviewSheet: View {
         review?.suggestions.filter { chosen.contains($0.id) } ?? []
     }
 
+    private var canReply: Bool {
+        phase == nil && (showingEdit ? editConversation != nil : reviewConversation != nil)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             ViewHeader(
-                title: "Review with AI",
-                subtitle: "\(settings.provider.label) checks “\(rule.name.isEmpty ? "this rule" : rule.name)” and suggests improvements",
-                systemImage: "sparkles"
+                title: showingEdit ? "Suggested Rule" : "Review with AI",
+                subtitle: showingEdit
+                    ? "\(settings.provider.label) rewrote “\(rule.name.isEmpty ? "this rule" : rule.name)” with \(appliedCount) suggestion\(appliedCount == 1 ? "" : "s")"
+                    : "\(settings.provider.label) checks “\(rule.name.isEmpty ? "this rule" : rule.name)” and suggests improvements",
+                systemImage: showingEdit ? "curlybraces" : "sparkles"
             )
 
             if let error {
@@ -96,9 +112,7 @@ struct RuleReviewSheet: View {
             if let phase {
                 VStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text(phase == .analyzing
-                         ? "Analyzing the rule with \(settings.provider.label)…"
-                         : "\(settings.provider.label) is editing the rule with \(chosen.count) suggestion\(chosen.count == 1 ? "" : "s")…")
+                    Text(progressText(phase))
                         .font(.system(size: 12))
                         .foregroundStyle(ForelTheme.primaryText)
                     Text("This can take up to a minute.")
@@ -106,17 +120,53 @@ struct RuleReviewSheet: View {
                         .foregroundStyle(ForelTheme.secondaryText)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if showingEdit, let edit {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let lastReply { youSaid(lastReply) }
+                    if let explanation = edit.explanation {
+                        Text(explanation)
+                            .font(.system(size: 12))
+                            .foregroundStyle(ForelTheme.primaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
+                    RuleJSONView(rule: edit.rule)
+                }
+                .frame(maxHeight: .infinity, alignment: .top)
             } else if let review {
                 ScrollView {
-                    ReviewResultView(review: review, chosen: $chosen)
-                        .padding(.trailing, 6)
+                    VStack(alignment: .leading, spacing: 10) {
+                        if let lastReply { youSaid(lastReply) }
+                        ReviewResultView(review: review, chosen: $chosen)
+                    }
+                    .padding(.trailing, 6)
                 }
                 .frame(maxHeight: .infinity)
             } else {
                 Spacer(minLength: 0)
             }
 
-            Text("Sends this rule (conditions, actions, folder paths and scripts, without upload passwords), the watched folder's path and its other rules — never the names or contents of your files.")
+            if canReply {
+                HStack(alignment: .bottom, spacing: 8) {
+                    TextField(
+                        showingEdit
+                            ? "Reply to the AI: ask for changes to this rule, or share an idea…"
+                            : "Reply to the AI with new directions or ideas, e.g. “keep the script” or “also handle images”…",
+                        text: $replyText,
+                        axis: .vertical
+                    )
+                    .lineLimit(1...4)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(sendReply)
+                    Button("Send", action: sendReply)
+                        .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .help(showingEdit
+                              ? "The AI adjusts the rule it wrote, or keeps it and answers you"
+                              : "The AI reconsiders the rule and updates its suggestions")
+                }
+            }
+
+            Text("Sends this rule (conditions, actions, folder paths and scripts, without upload passwords), the watched folder's path, its other rules and your replies — never the names or contents of your files.")
                 .font(.system(size: 10))
                 .foregroundStyle(ForelTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -124,6 +174,14 @@ struct RuleReviewSheet: View {
             Divider().overlay(ForelTheme.divider)
 
             HStack {
+                if showingEdit, phase == nil {
+                    Button("Back to Suggestions") {
+                        showingEdit = false
+                        lastReply = nil
+                        error = nil
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
                 Spacer()
                 if phase != nil {
                     Button("Stop") {
@@ -136,45 +194,75 @@ struct RuleReviewSheet: View {
                     Button("Close", action: onClose)
                         .buttonStyle(SecondaryButtonStyle())
                         .keyboardShortcut(.cancelAction)
-                    Button("Analyze Again", action: analyze)
-                        .buttonStyle(SecondaryButtonStyle())
-                    if let review, !review.suggestions.isEmpty {
-                        Button(chosen.count > 1 ? "Apply \(chosen.count) Suggestions" : "Apply Suggestion", action: applyChosen)
+                    if showingEdit, let edit {
+                        Button("Use This Rule") { onEdited(edit, appliedCount) }
                             .buttonStyle(PrimaryButtonStyle())
-                            .keyboardShortcut(.defaultAction)
-                            .disabled(chosen.isEmpty)
-                            .opacity(chosen.isEmpty ? 0.5 : 1)
-                            .help("\(settings.provider.label) rewrites the rule with the chosen suggestions and loads it into the editor for you to save")
+                            .help("Load this rule into the editor, where you can check it, test it and save it")
+                    } else {
+                        Button("Analyze Again", action: analyze)
+                            .buttonStyle(SecondaryButtonStyle())
+                        if let review, !review.suggestions.isEmpty {
+                            Button(chosen.count > 1 ? "Apply \(chosen.count) Suggestions" : "Apply Suggestion", action: applyChosen)
+                                .buttonStyle(PrimaryButtonStyle())
+                                .disabled(chosen.isEmpty)
+                                .opacity(chosen.isEmpty ? 0.5 : 1)
+                                .help("\(settings.provider.label) rewrites the rule with the chosen suggestions and shows it before it goes into the editor")
+                        }
                     }
                 }
             }
         }
         .padding(22)
-        .frame(width: 720, height: 600)
+        .frame(width: 720, height: 640)
         .background(ForelTheme.background)
         .onAppear { if review == nil && phase == nil { analyze() } }
         .onDisappear { task?.cancel() }
     }
 
+    private func progressText(_ phase: Phase) -> String {
+        switch phase {
+        case .analyzing: return "Analyzing the rule with \(settings.provider.label)…"
+        case .editing: return "\(settings.provider.label) is writing the rule with \(chosen.count) suggestion\(chosen.count == 1 ? "" : "s")…"
+        case .replying: return "\(settings.provider.label) is considering your reply…"
+        }
+    }
+
+    private func youSaid(_ text: String) -> some View {
+        Label {
+            Text(text).textSelection(.enabled)
+        } icon: {
+            Image(systemName: "person.crop.circle")
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(ForelTheme.secondaryText)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
     private func analyze() {
         guard phase == nil else { return }
         error = nil
+        lastReply = nil
         phase = .analyzing
         let apiKey = AIKeychain.key(for: settings.provider.rawValue)
         let rule = rule, folderPath = folderPath, otherRules = otherRules, settings = settings
         task = Task {
             do {
-                let result = try await RuleReviewer.review(
+                let (result, conversation) = try await RuleReviewer.review(
                     rule: rule, folderPath: folderPath, otherRules: otherRules, settings: settings, apiKey: apiKey
                 )
                 guard !Task.isCancelled else { return }
-                review = result
-                chosen = Set(result.suggestions.map(\.id))
+                show(result, conversation: conversation)
             } catch {
                 report(error)
             }
             if !Task.isCancelled { phase = nil; task = nil }
         }
+    }
+
+    private func show(_ result: RuleReview, conversation: RuleReviewConversation) {
+        review = result
+        reviewConversation = conversation
+        chosen = Set(result.suggestions.map(\.id))
     }
 
     private func applyChosen() {
@@ -186,14 +274,44 @@ struct RuleReviewSheet: View {
         let rule = rule, folderPath = folderPath, settings = settings
         task = Task {
             do {
-                let edit = try await RuleReviewer.edit(
+                let (result, conversation) = try await RuleReviewer.edit(
                     rule: rule, folderPath: folderPath, suggestions: suggestions, settings: settings, apiKey: apiKey
                 )
                 guard !Task.isCancelled else { return }
-                phase = nil
-                task = nil
-                onEdited(edit, suggestions.count)
-                return
+                edit = result
+                editConversation = conversation
+                appliedCount = suggestions.count
+                lastReply = nil
+                showingEdit = true
+            } catch {
+                report(error)
+            }
+            if !Task.isCancelled { phase = nil; task = nil }
+        }
+    }
+
+    private func sendReply() {
+        let feedback = replyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canReply, !feedback.isEmpty,
+              let conversation = showingEdit ? editConversation : reviewConversation else { return }
+        error = nil
+        phase = .replying
+        let apiKey = AIKeychain.key(for: settings.provider.rawValue)
+        let rule = rule, settings = settings
+        task = Task {
+            do {
+                let (reply, next) = try await RuleReviewer.reply(
+                    feedback, to: conversation, rule: rule, settings: settings, apiKey: apiKey
+                )
+                guard !Task.isCancelled else { return }
+                switch reply {
+                case .review(let result): show(result, conversation: next)
+                case .edit(let result):
+                    edit = result
+                    editConversation = next
+                }
+                lastReply = feedback
+                replyText = ""
             } catch {
                 report(error)
             }
@@ -254,7 +372,7 @@ private struct ReviewResultView: View {
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Text("Choose the suggestions to apply. Forel then asks the AI to edit the rule with them and loads the result into the editor, ready for you to check and save.")
+                Text("Choose the suggestions to apply, or reply to the AI below to change them. Forel then asks the AI to write the rule with them and shows it before it goes into the editor, ready for you to check and save.")
                     .font(.system(size: 11))
                     .foregroundStyle(ForelTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)

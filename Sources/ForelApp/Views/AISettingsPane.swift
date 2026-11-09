@@ -115,7 +115,7 @@ struct AISettingsPane: View {
 
                     When you press Review with AI, Forel sends that rule (its conditions, actions, folder paths and scripts, \
                     with upload passwords removed), the watched folder's path, the folder's other rules and your macOS \
-                    version, and, when you apply suggestions, the ones you chose. It never sends the names or contents of your files.
+                    version, and, when you apply suggestions or reply to the AI, the ones you chose and what you wrote. It never sends the names or contents of your files.
 
                     The API key is kept in your Keychain. Read a generated script or a suggested rule before saving: it runs with your permissions.
                     """)

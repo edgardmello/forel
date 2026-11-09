@@ -455,9 +455,70 @@ public enum RuleReviewer {
         return parts.joined(separator: "\n\n")
     }
 
+    /// The rule in the compact JSON format the AI service reads and writes,
+    /// for showing it to the user ("View as JSON") and copying it.
+    public static func json(for rule: Rule) -> String {
+        (try? encodedJSON(RuleBlueprint(rule))) ?? "{}"
+    }
+
+    // MARK: Conversation
+
+    /// The service's first answer from the user message, then each reply,
+    /// as a chat-completions message list, so the user can answer the
+    /// service with new directions and the service keeps the context.
+    public static func reviewConversation(
+        rule: Rule,
+        folderPath: String?,
+        otherRules: [Rule],
+        language: String = preferredLanguageName(),
+        macOSVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
+    ) throws -> RuleReviewConversation {
+        RuleReviewConversation(mode: .review, messages: [
+            .init(role: "system", content: reviewSystemPrompt(language: language, macOSVersion: macOSVersion)),
+            .init(role: "user", content: try reviewUserMessage(rule: rule, folderPath: folderPath, otherRules: otherRules)),
+        ])
+    }
+
+    public static func editConversation(
+        rule: Rule,
+        folderPath: String?,
+        suggestions: [RuleReviewSuggestion],
+        language: String = preferredLanguageName(),
+        macOSVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
+    ) throws -> RuleReviewConversation {
+        guard !suggestions.isEmpty else { throw ScriptGenerationError("Choose at least one suggestion to apply.") }
+        return RuleReviewConversation(mode: .edit, messages: [
+            .init(role: "system", content: editSystemPrompt(language: language, macOSVersion: macOSVersion)),
+            .init(role: "user", content: try editUserMessage(rule: rule, folderPath: folderPath, suggestions: suggestions)),
+        ])
+    }
+
+    /// The user's answer to the service's last reply, with what the service
+    /// must answer in return.
+    static func feedbackMessage(_ feedback: String, mode: RuleReviewConversation.Mode) -> String {
+        switch mode {
+        case .review:
+            return """
+            My reply to your review: \(feedback)
+
+            Take it into account and answer with the same JSON object as before (summary and the full, updated list of suggestions). \
+            If I asked a question, answer it in the summary.
+            """
+        case .edit:
+            return """
+            My reply about the rule you wrote: \(feedback)
+
+            If this asks for changes or brings an idea worth applying, change the rule accordingly; if not, keep it as it is. \
+            Answer with the same JSON object as before: the complete rule and an explanation that answers me and says what you changed, if anything.
+            """
+        }
+    }
+
+    // MARK: Requests
+
     /// A `/chat/completions` request with the key and address checks shared
     /// with Generate Code.
-    static func chatRequest(system: String, user: String, settings: AISettings, apiKey: String) throws -> URLRequest {
+    static func chatRequest(messages: [RuleReviewConversation.Message], settings: AISettings, apiKey: String) throws -> URLRequest {
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else {
             throw ScriptGenerationError("Add your \(settings.provider.label) API key in Settings → AI.")
@@ -477,10 +538,7 @@ public enum RuleReviewer {
             "model": model,
             "temperature": 0.2,
             "stream": false,
-            "messages": [
-                ["role": "system", "content": system],
-                ["role": "user", "content": user],
-            ],
+            "messages": messages.map { ["role": $0.role, "content": $0.content] },
         ]
         // DeepSeek and Model Studio both support JSON mode; other services
         // may reject the field, and the prompt already asks for JSON.
@@ -489,6 +547,10 @@ public enum RuleReviewer {
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
+    }
+
+    public static func request(for conversation: RuleReviewConversation, settings: AISettings, apiKey: String) throws -> URLRequest {
+        try chatRequest(messages: conversation.messages, settings: settings, apiKey: apiKey)
     }
 
     /// The request analyzing `rule`.
@@ -501,9 +563,8 @@ public enum RuleReviewer {
         language: String = preferredLanguageName(),
         macOSVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
     ) throws -> URLRequest {
-        try chatRequest(
-            system: reviewSystemPrompt(language: language, macOSVersion: macOSVersion),
-            user: try reviewUserMessage(rule: rule, folderPath: folderPath, otherRules: otherRules),
+        try Self.request(
+            for: reviewConversation(rule: rule, folderPath: folderPath, otherRules: otherRules, language: language, macOSVersion: macOSVersion),
             settings: settings,
             apiKey: apiKey
         )
@@ -519,10 +580,8 @@ public enum RuleReviewer {
         language: String = preferredLanguageName(),
         macOSVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
     ) throws -> URLRequest {
-        guard !suggestions.isEmpty else { throw ScriptGenerationError("Choose at least one suggestion to apply.") }
-        return try chatRequest(
-            system: editSystemPrompt(language: language, macOSVersion: macOSVersion),
-            user: try editUserMessage(rule: rule, folderPath: folderPath, suggestions: suggestions),
+        try Self.request(
+            for: editConversation(rule: rule, folderPath: folderPath, suggestions: suggestions, language: language, macOSVersion: macOSVersion),
             settings: settings,
             apiKey: apiKey
         )
@@ -543,18 +602,22 @@ public enum RuleReviewer {
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
-    /// The JSON object answering a chat-completions request, or the
-    /// service's own error.
-    static func answerObject(_ data: Data, statusCode: Int) throws -> [String: Any] {
+    /// The text of a chat-completions answer, or the service's own error.
+    static func answerContent(_ data: Data, statusCode: Int) throws -> String {
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         guard (200..<300).contains(statusCode) else {
             throw ScriptGenerator.serviceError(statusCode: statusCode, json: json)
         }
         guard let choices = json?["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else {
+              let content = message["content"] as? String,
+              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ScriptGenerationError("The service's answer was empty.")
         }
+        return content
+    }
+
+    static func object(in content: String) throws -> [String: Any] {
         guard let object = jsonObject(in: content) else {
             throw ScriptGenerationError("The service's answer wasn't in the expected format. Try again, or choose another model in Settings → AI.")
         }
@@ -567,9 +630,9 @@ public enum RuleReviewer {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    /// The analysis in a chat-completions answer.
-    public static func review(fromResponse data: Data, statusCode: Int) throws -> RuleReview {
-        let object = try answerObject(data, statusCode: statusCode)
+    /// The analysis in an answer's text.
+    static func review(fromContent content: String) throws -> RuleReview {
+        let object = try Self.object(in: content)
         let suggestions = ((object["suggestions"] as? [[String: Any]]) ?? []).enumerated().compactMap { index, entry -> RuleReviewSuggestion? in
             let title = text(entry["title"])
             let detail = text(entry["detail"])
@@ -584,11 +647,18 @@ public enum RuleReviewer {
         return RuleReview(summary: summary, suggestions: suggestions)
     }
 
-    /// The edited rule in a chat-completions answer, checked against what
-    /// Forel supports and keeping `rule`'s identity, so it can replace the
-    /// editor's draft as is.
-    public static func edit(fromResponse data: Data, statusCode: Int, rule: Rule) throws -> RuleEdit {
-        let object = try answerObject(data, statusCode: statusCode)
+    /// The analysis in a chat-completions answer.
+    public static func review(fromResponse data: Data, statusCode: Int) throws -> RuleReview {
+        try review(fromContent: try answerContent(data, statusCode: statusCode))
+    }
+
+    /// The edited rule in an answer's text, checked against what Forel
+    /// supports and keeping `rule`'s identity, so it can replace the
+    /// editor's draft as is. `requireChange` rejects an answer that leaves
+    /// `rule` as it was — right for applying suggestions, wrong for a reply
+    /// that only asked a question.
+    static func edit(fromContent content: String, rule: Rule, requireChange: Bool = true) throws -> RuleEdit {
+        let object = try Self.object(in: content)
         guard let raw = object["rule"] ?? object["improvedRule"], !(raw is NSNull),
               let ruleData = try? JSONSerialization.data(withJSONObject: raw),
               let blueprint = try? JSONDecoder().decode(RuleBlueprint.self, from: ruleData) else {
@@ -599,10 +669,15 @@ public enum RuleReviewer {
             throw RuleEditError(problems: result.problems)
         }
         let edited = restoreRedactedUploads(in: candidate, from: rule)
-        guard RuleBlueprint(edited) != RuleBlueprint(rule) else {
+        if requireChange, RuleBlueprint(edited) == RuleBlueprint(rule) {
             throw ScriptGenerationError("The service returned the rule unchanged. Try again, or choose other suggestions.")
         }
         return RuleEdit(rule: edited, explanation: text(object["explanation"]))
+    }
+
+    /// The edited rule in a chat-completions answer.
+    public static func edit(fromResponse data: Data, statusCode: Int, rule: Rule) throws -> RuleEdit {
+        try edit(fromContent: try answerContent(data, statusCode: statusCode), rule: rule)
     }
 
     /// The service only saw upload URLs without their password; when the
@@ -628,16 +703,19 @@ public enum RuleReviewer {
 
     // MARK: Sending
 
-    private static func send(_ request: URLRequest, settings: AISettings, session: URLSession) async throws -> (Data, Int) {
+    private static func send(_ conversation: RuleReviewConversation, settings: AISettings, apiKey: String, session: URLSession) async throws -> String {
+        let request = try Self.request(for: conversation, settings: settings, apiKey: apiKey)
+        let data: Data
+        let response: URLResponse
         do {
-            let (data, response) = try await session.data(for: request)
-            return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+            (data, response) = try await session.data(for: request)
         } catch let error as URLError {
             throw ScriptGenerationError("Couldn't reach \(settings.provider.label): \(error.localizedDescription)")
         }
+        return try answerContent(data, statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0)
     }
 
-    /// Analyzes `rule`.
+    /// Analyzes `rule`. The conversation returned lets the user reply.
     public static func review(
         rule: Rule,
         folderPath: String?,
@@ -645,10 +723,12 @@ public enum RuleReviewer {
         settings: AISettings,
         apiKey: String,
         session: URLSession = .shared
-    ) async throws -> RuleReview {
-        let request = try reviewRequest(rule: rule, folderPath: folderPath, otherRules: otherRules, settings: settings, apiKey: apiKey)
-        let (data, status) = try await send(request, settings: settings, session: session)
-        return try review(fromResponse: data, statusCode: status)
+    ) async throws -> (RuleReview, RuleReviewConversation) {
+        var conversation = try reviewConversation(rule: rule, folderPath: folderPath, otherRules: otherRules)
+        let content = try await send(conversation, settings: settings, apiKey: apiKey, session: session)
+        let result = try Self.review(fromContent: content)
+        conversation.messages.append(.init(role: "assistant", content: content))
+        return (result, conversation)
     }
 
     /// Rewrites `rule` with the accepted `suggestions`.
@@ -659,9 +739,71 @@ public enum RuleReviewer {
         settings: AISettings,
         apiKey: String,
         session: URLSession = .shared
-    ) async throws -> RuleEdit {
-        let request = try editRequest(rule: rule, folderPath: folderPath, suggestions: suggestions, settings: settings, apiKey: apiKey)
-        let (data, status) = try await send(request, settings: settings, session: session)
-        return try edit(fromResponse: data, statusCode: status, rule: rule)
+    ) async throws -> (RuleEdit, RuleReviewConversation) {
+        var conversation = try editConversation(rule: rule, folderPath: folderPath, suggestions: suggestions)
+        let content = try await send(conversation, settings: settings, apiKey: apiKey, session: session)
+        let result = try Self.edit(fromContent: content, rule: rule)
+        conversation.messages.append(.init(role: "assistant", content: content))
+        return (result, conversation)
     }
+
+    /// The conversation with the user's `feedback` added, ready to send.
+    public static func appending(_ feedback: String, to conversation: RuleReviewConversation) throws -> RuleReviewConversation {
+        let trimmed = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw ScriptGenerationError("Write what you'd like the AI to consider.") }
+        var next = conversation
+        next.messages.append(.init(role: "user", content: feedbackMessage(trimmed, mode: conversation.mode)))
+        return next
+    }
+
+    /// Sends the user's answer to the service's last reply: new directions
+    /// or ideas for the review, or for the rule it wrote. `rule` is the
+    /// rule as it was before the service edited it, which an edited rule
+    /// keeps the identity of.
+    public static func reply(
+        _ feedback: String,
+        to conversation: RuleReviewConversation,
+        rule: Rule,
+        settings: AISettings,
+        apiKey: String,
+        session: URLSession = .shared
+    ) async throws -> (RuleReviewReply, RuleReviewConversation) {
+        var next = try appending(feedback, to: conversation)
+        let content = try await send(next, settings: settings, apiKey: apiKey, session: session)
+        let result = try parseReply(content, mode: conversation.mode, rule: rule)
+        next.messages.append(.init(role: "assistant", content: content))
+        return (result, next)
+    }
+
+    static func parseReply(_ content: String, mode: RuleReviewConversation.Mode, rule: Rule) throws -> RuleReviewReply {
+        switch mode {
+        case .review: return .review(try review(fromContent: content))
+        case .edit: return .edit(try edit(fromContent: content, rule: rule, requireChange: false))
+        }
+    }
+}
+
+/// The messages exchanged with the service during one review, so the user
+/// can answer it and it keeps the context.
+public struct RuleReviewConversation: Equatable, Sendable {
+    public enum Mode: Sendable, Equatable {
+        /// Analyzing the rule and listing suggestions.
+        case review
+        /// Writing the rule with the chosen suggestions.
+        case edit
+    }
+
+    public struct Message: Equatable, Sendable {
+        public let role: String
+        public let content: String
+    }
+
+    public let mode: Mode
+    public internal(set) var messages: [Message]
+}
+
+/// What the service answered to the user's reply.
+public enum RuleReviewReply: Equatable, Sendable {
+    case review(RuleReview)
+    case edit(RuleEdit)
 }

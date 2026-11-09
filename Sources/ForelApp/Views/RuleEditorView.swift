@@ -39,6 +39,7 @@ struct RuleEditorView: View {
     /// Set after "Review with AI" edited the draft, so the editor can say so
     /// and offer to go back.
     @State private var aiEdit: AIEditState?
+    @State private var showingJSON = false
     @EnvironmentObject private var model: AppModel
     private let preferredHeight: CGFloat
     let onSave: (Rule) -> Void
@@ -57,7 +58,18 @@ struct RuleEditorView: View {
                 title: rule.name.isEmpty ? "New Rule" : "Edit Rule",
                 subtitle: "Conditions decide which files match; actions decide what happens",
                 systemImage: "slider.horizontal.3"
-            )
+            ) {
+                Button {
+                    showingJSON = true
+                } label: {
+                    Label("View as JSON", systemImage: "curlybraces")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .help("Show this rule's scope, conditions and actions as JSON, to read or copy")
+                .sheet(isPresented: $showingJSON) {
+                    RuleJSONSheet(rule: rule) { showingJSON = false }
+                }
+            }
             if showValidationErrors, !validationMessages.isEmpty {
                 RuleValidationBanner(messages: validationMessages)
             }
