@@ -18,8 +18,9 @@
 import SwiftUI
 import ForelCore
 
-/// Settings → AI: "Generate Code" in script actions. Off by default; nothing
-/// is sent anywhere until the user presses Generate Code.
+/// Settings → AI: "Generate Code" in script actions and "Review with AI" in
+/// the rule editor. Off by default; nothing is sent anywhere until the user
+/// presses one of them.
 struct AISettingsPane: View {
     @EnvironmentObject var model: AppModel
     @State private var apiKey = ""
@@ -28,20 +29,20 @@ struct AISettingsPane: View {
 
     var body: some View {
         Group {
-            SectionLabel(title: "Generate Code")
+            SectionLabel(title: "AI Features")
             GlassCard {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Write scripts from a description")
+                        Text("Write scripts and review rules with AI")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(ForelTheme.primaryText)
-                        Text("Adds a Generate Code button to script actions. It runs only when you press it.")
+                        Text("Adds Generate Code to script actions and Review with AI to the rule editor. They run only when you press them.")
                             .font(.system(size: 11))
                             .foregroundStyle(ForelTheme.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
-                    Toggle("Generate Code", isOn: enabledBinding)
+                    Toggle("AI features", isOn: enabledBinding)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.small)
@@ -110,8 +111,13 @@ struct AISettingsPane: View {
                     Text("""
                     When you press Generate Code, Forel sends your description, the script language, your macOS version, \
                     and the names of the command-line tools installed on this Mac (such as exiftool or ffmpeg), so the \
-                    script uses commands that work here. It never sends file names, paths, file contents, or your rules. \
-                    The API key is kept in your Keychain. Read a generated script before saving the rule: it runs with your permissions.
+                    script uses commands that work here. Generate Code never sends file names, paths, file contents, or your rules.
+
+                    When you press Review with AI, Forel sends that rule (its conditions, actions, folder paths and scripts, \
+                    with upload passwords removed), the watched folder's path, the folder's other rules, what you say the \
+                    rule should achieve, and your macOS version. It never sends the names or contents of your files.
+
+                    The API key is kept in your Keychain. Read a generated script or a suggested rule before saving: it runs with your permissions.
                     """)
                     .font(.system(size: 11))
                     .foregroundStyle(ForelTheme.secondaryText)

@@ -202,6 +202,12 @@ struct RuleEditorView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(ForelTheme.primaryText)
                 Spacer()
+                ReviewRuleButton(rule: rule) { suggested in
+                    rule = suggested
+                    hasTestedRule = false
+                    showValidationErrors = false
+                }
+                .disabled(model.isTestingRule)
                 Button("Test", action: runDryRun)
                     .buttonStyle(SecondaryButtonStyle())
                     .disabled(model.isTestingRule || rule.name.trimmingCharacters(in: .whitespaces).isEmpty)
