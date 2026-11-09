@@ -264,8 +264,10 @@ struct RuleBlueprint: Codable, Equatable {
 /// the user accepted. What is sent: the rule (its conditions, actions,
 /// paths and embedded scripts, with upload passwords removed), the watched
 /// folder's path, the user's optional description of the rule's goal, the
-/// folder's other rules (analysis only), the user's replies and the macOS
-/// version — never file names or contents.
+/// folder's other rules (analysis only), the user's replies, the macOS
+/// version and, when Remember Reviews is on, what the user decided in up to
+/// a few similar earlier reviews (`RuleReviewMemory`) — never file names or
+/// contents.
 public enum RuleReviewer {
     /// Most other rules of the folder sent along for overlap checks.
     static let maximumSiblingRules = 20
@@ -636,7 +638,7 @@ public enum RuleReviewer {
         return trimmed.isEmpty ? nil : "What this rule should achieve, in my words: \(trimmed)"
     }
 
-    public static func reviewUserMessage(rule: Rule, folderPath: String?, otherRules: [Rule], goal: String = "") throws -> String {
+    public static func reviewUserMessage(rule: Rule, folderPath: String?, otherRules: [Rule], goal: String = "", pastReviews: [RuleReviewRecord] = []) throws -> String {
         var parts: [String] = []
         if let folderPath, !folderPath.isEmpty { parts.append("Watched folder: \(folderPath)") }
         if let goal = goalLine(goal) { parts.append(goal) }
@@ -645,6 +647,7 @@ public enum RuleReviewer {
         if !siblings.isEmpty {
             parts.append("Other rules of this folder, in the order they run (for context only):\n" + (try encodedJSON(siblings.map(RuleBlueprint.init))))
         }
+        if let memory = RuleReviewMemory.promptSection(pastReviews, currentRuleId: rule.id) { parts.append(memory) }
         return parts.joined(separator: "\n\n")
     }
 
@@ -676,12 +679,13 @@ public enum RuleReviewer {
         folderPath: String?,
         otherRules: [Rule],
         goal: String = "",
+        pastReviews: [RuleReviewRecord] = [],
         language: String = preferredLanguageName(),
         macOSVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
     ) throws -> RuleReviewConversation {
         RuleReviewConversation(mode: .review, messages: [
             .init(role: "system", content: reviewSystemPrompt(language: language, macOSVersion: macOSVersion)),
-            .init(role: "user", content: try reviewUserMessage(rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal)),
+            .init(role: "user", content: try reviewUserMessage(rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal, pastReviews: pastReviews)),
         ])
     }
 
@@ -930,11 +934,12 @@ public enum RuleReviewer {
         folderPath: String?,
         otherRules: [Rule],
         goal: String = "",
+        pastReviews: [RuleReviewRecord] = [],
         settings: AISettings,
         apiKey: String,
         session: URLSession = .shared
     ) async throws -> (RuleReview, RuleReviewConversation) {
-        var conversation = try reviewConversation(rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal)
+        var conversation = try reviewConversation(rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal, pastReviews: pastReviews)
         let content = try await send(conversation, settings: settings, apiKey: apiKey, session: session)
         let result = try Self.review(fromContent: content)
         conversation.messages.append(.init(role: "assistant", content: content))

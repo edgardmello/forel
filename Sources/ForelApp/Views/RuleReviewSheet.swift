@@ -23,7 +23,8 @@ import ForelCore
 struct ReviewRuleButton: View {
     @EnvironmentObject var model: AppModel
     let rule: Rule
-    let onEdited: (RuleEdit, Int) -> Void
+    /// The edit, how many suggestions it applies, and the remembered review it came from.
+    let onEdited: (RuleEdit, Int, String?) -> Void
     @State private var showing = false
 
     var body: some View {
@@ -41,8 +42,8 @@ struct ReviewRuleButton: View {
                     folderPath: model.folders.first { $0.id == rule.folderId }?.path,
                     otherRules: model.rules.filter { $0.folderId == rule.folderId && $0.id != rule.id },
                     settings: model.aiSettings,
-                    onEdited: { edit, count in
-                        onEdited(edit, count)
+                    onEdited: { edit, count, reviewId in
+                        onEdited(edit, count, reviewId)
                         showing = false
                     },
                     onClose: { showing = false }
@@ -64,8 +65,11 @@ struct RuleReviewSheet: View {
     let folderPath: String?
     let otherRules: [Rule]
     let settings: AISettings
-    let onEdited: (RuleEdit, Int) -> Void
+    /// The edit, how many suggestions it applies, and the id of the
+    /// remembered review, so the editor can record how it ended.
+    let onEdited: (RuleEdit, Int, String?) -> Void
     let onClose: () -> Void
+    @EnvironmentObject private var model: AppModel
 
     private enum Phase { case analyzing, editing, replying }
 
@@ -84,6 +88,10 @@ struct RuleReviewSheet: View {
     @State private var error: String?
     @State private var phase: Phase?
     @State private var task: Task<Void, Never>?
+    /// What this session has done so far, kept when Remember Reviews is on.
+    @State private var record: RuleReviewRecord?
+    /// How many earlier reviews went along with the analysis.
+    @State private var pastReviewCount = 0
 
     private var chosenSuggestions: [RuleReviewSuggestion] {
         review?.suggestions.filter { chosen.contains($0.id) } ?? []
@@ -148,6 +156,12 @@ struct RuleReviewSheet: View {
                             .foregroundStyle(ForelTheme.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                         }
+                        if pastReviewCount > 0 {
+                            Label("Took \(pastReviewCount) similar earlier review\(pastReviewCount == 1 ? "" : "s") into account", systemImage: "clock.arrow.circlepath")
+                                .font(.system(size: 11))
+                                .foregroundStyle(ForelTheme.secondaryText)
+                                .help("What you applied, turned down, replied and saved in those reviews went along, so the AI can follow your preferences and reuse what worked")
+                        }
                         if let lastReply { youSaid(lastReply) }
                         ReviewResultView(review: review, chosen: $chosen)
                     }
@@ -178,7 +192,9 @@ struct RuleReviewSheet: View {
                 }
             }
 
-            Text("Sends this rule (conditions, actions, folder paths and scripts, without upload passwords), the watched folder's path, its other rules, the goal you describe and your replies — never the names or contents of your files.")
+            Text(model.rememberReviews
+                 ? "Sends this rule (conditions, actions, folder paths and scripts, without upload passwords), the watched folder's path, its other rules, the goal you describe, your replies and what you decided in similar earlier reviews — never the names or contents of your files. Reviews are remembered on this Mac (Settings → AI)."
+                 : "Sends this rule (conditions, actions, folder paths and scripts, without upload passwords), the watched folder's path, its other rules, the goal you describe and your replies — never the names or contents of your files.")
                 .font(.system(size: 10))
                 .foregroundStyle(ForelTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -207,7 +223,10 @@ struct RuleReviewSheet: View {
                         .buttonStyle(SecondaryButtonStyle())
                         .keyboardShortcut(.cancelAction)
                     if showingEdit, let edit {
-                        Button("Use This Rule") { onEdited(edit, appliedCount) }
+                        Button("Use This Rule") {
+                            remember { $0.finish(.used) }
+                            onEdited(edit, appliedCount, model.rememberReviews ? record?.id : nil)
+                        }
                             .buttonStyle(PrimaryButtonStyle())
                             .help("Load this rule into the editor, where you can check it, test it and save it")
                     } else {
@@ -283,13 +302,19 @@ struct RuleReviewSheet: View {
         phase = .analyzing
         let apiKey = AIKeychain.key(for: settings.provider.rawValue)
         let rule = rule, folderPath = folderPath, otherRules = otherRules, goal = goal, settings = settings
+        let pastReviews = model.relevantPastReviews(for: rule, folderPath: folderPath, goal: goal, excluding: record?.id)
         task = Task {
             do {
                 let (result, conversation) = try await RuleReviewer.review(
-                    rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal, settings: settings, apiKey: apiKey
+                    rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal, pastReviews: pastReviews,
+                    settings: settings, apiKey: apiKey
                 )
                 guard !Task.isCancelled else { return }
                 show(result, conversation: conversation)
+                pastReviewCount = pastReviews.count
+                // Analyze Again starts the session over, under the same record.
+                record = RuleReviewRecord(id: record?.id ?? UUID().uuidString, rule: rule, folderPath: folderPath, goal: goal, review: result)
+                remember { _ in }
             } catch {
                 report(error)
             }
@@ -319,6 +344,7 @@ struct RuleReviewSheet: View {
                 edit = result
                 editConversation = conversation
                 appliedCount = suggestions.count
+                remember { $0.propose(result, chosen: suggestions) }
                 lastReply = nil
                 showingEdit = true
             } catch {
@@ -343,10 +369,13 @@ struct RuleReviewSheet: View {
                 )
                 guard !Task.isCancelled else { return }
                 switch reply {
-                case .review(let result): show(result, conversation: next)
+                case .review(let result):
+                    show(result, conversation: next)
+                    remember { $0.addReply(feedback); $0.update(with: result) }
                 case .edit(let result):
                     edit = result
                     editConversation = next
+                    remember { $0.addReply(feedback); $0.propose(result) }
                 }
                 lastReply = feedback
                 replyText = ""
@@ -355,6 +384,14 @@ struct RuleReviewSheet: View {
             }
             if !Task.isCancelled { phase = nil; task = nil }
         }
+    }
+
+    /// Applies `change` to this session's record and keeps it.
+    private func remember(_ change: (inout RuleReviewRecord) -> Void) {
+        guard var current = record else { return }
+        change(&current)
+        record = current
+        model.rememberReview(current)
     }
 
     private func report(_ failure: Error) {

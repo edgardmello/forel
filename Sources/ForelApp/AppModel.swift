@@ -63,6 +63,10 @@ final class AppModel: ObservableObject {
     @Published var watcherNotificationsEnabled: Bool = true
     @Published var historyMaxDays: Int = 30
     @Published private(set) var aiSettings = AISettings()
+    /// Whether Review with AI keeps what happened in each review and sends
+    /// the relevant earlier ones with new reviews.
+    @Published private(set) var rememberReviews = true
+    @Published private(set) var rememberedReviewCount = 0
     /// Minutes between re-checks of time-dependent rules; 0 turns them off.
     @Published private(set) var recheckIntervalMinutes: Int = 30
     @Published private(set) var trashCleanupPolicy = TrashCleanupPolicy()
@@ -176,6 +180,8 @@ final class AppModel: ObservableObject {
 
         self.ruleExpansionPreferences = db.withLock { db in RuleExpansionPreferences.load(from: db) }
         self.aiSettings = db.withLock { db in AISettings.load(from: db) }
+        self.rememberReviews = db.withLock { db in (try? db.getSetting("ai_remember_reviews")) != "0" }
+        self.rememberedReviewCount = db.withLock { db in (try? db.countReviewRecords()) ?? 0 }
 
         let storedRecheck = db.withLock { db in (try? db.getSetting("recheck_interval_minutes")).flatMap { Int($0) } }
         self.recheckIntervalMinutes = max(storedRecheck ?? 30, 0)
@@ -403,6 +409,43 @@ final class AppModel: ObservableObject {
         guard settings != aiSettings else { return }
         aiSettings = settings
         db.withLock { db in try? settings.save(to: db) }
+    }
+
+    // MARK: Review with AI memory
+
+    func setRememberReviews(_ enabled: Bool) {
+        rememberReviews = enabled
+        db.withLock { db in try? db.setSetting("ai_remember_reviews", enabled ? "1" : "0") }
+    }
+
+    /// The earlier reviews worth sending with a review of `rule`; none when
+    /// Remember Reviews is off.
+    func relevantPastReviews(for rule: Rule, folderPath: String?, goal: String, excluding: String?) -> [RuleReviewRecord] {
+        guard rememberReviews else { return [] }
+        let records = db.withLock { db in (try? db.getReviewRecords()) ?? [] }
+        return RuleReviewMemory.relevant(records, for: rule, folderPath: folderPath, goal: goal, excluding: excluding)
+    }
+
+    /// Keeps the latest state of a review session, when Remember Reviews is on.
+    func rememberReview(_ record: RuleReviewRecord) {
+        guard rememberReviews else { return }
+        rememberedReviewCount = db.withLock { db in
+            try? db.saveReviewRecord(record)
+            return (try? db.countReviewRecords()) ?? 0
+        }
+    }
+
+    /// Records how a review ended in the rule editor: saved, undone, or
+    /// closed without saving.
+    func finishReview(_ id: String, _ outcome: RuleReviewRecord.Outcome, savedRule: Rule? = nil) {
+        guard rememberReviews, var record = db.withLock({ db in try? db.getReviewRecord(id: id) }) else { return }
+        record.finish(outcome, savedRule: savedRule)
+        rememberReview(record)
+    }
+
+    func forgetReviews() {
+        db.withLock { db in try? db.deleteAllReviewRecords() }
+        rememberedReviewCount = 0
     }
 
     func setShowMenuBarIcon(_ enabled: Bool) {

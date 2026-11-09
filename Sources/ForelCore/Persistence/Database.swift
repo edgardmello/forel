@@ -31,7 +31,7 @@ extension ISO8601DateFormatter {
 /// `~/Library/Application Support/com.lab421.forel/forel.db` (migrated
 /// automatically from the legacy `com.forel.app` location) keeps working.
 public final class Database: @unchecked Sendable {
-    public static let currentSchemaVersion: Int64 = 10
+    public static let currentSchemaVersion: Int64 = 11
 
     private let handle: OpaquePointer
     private let lock = NSLock()
@@ -835,5 +835,77 @@ public final class Database: @unchecked Sendable {
         stmt.bind(3, ISO8601DateFormatter.forelUTC.string(from: matchedAt))
         stmt.bind(4, fingerprint)
         try stmt.runToCompletion()
+    }
+
+    // MARK: - Review with AI memory
+
+    private static func reviewRecordCoders() -> (JSONEncoder, JSONDecoder) {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return (encoder, decoder)
+    }
+
+    /// Saves `record`, replacing an earlier version of it, and forgets the
+    /// oldest reviews beyond `RuleReviewMemory.maximumStoredRecords`.
+    public func saveReviewRecord(_ record: RuleReviewRecord) throws {
+        let json = String(decoding: try Self.reviewRecordCoders().0.encode(record), as: UTF8.self)
+        try transaction {
+            let stmt = try statement(
+                """
+                INSERT INTO rule_review_memory (id, rule_id, folder_path, outcome, record, created_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ON CONFLICT(id) DO UPDATE SET
+                    rule_id = excluded.rule_id, folder_path = excluded.folder_path, outcome = excluded.outcome,
+                    record = excluded.record, updated_at = excluded.updated_at
+                """
+            )
+            stmt.bind(1, record.id)
+            stmt.bind(2, record.ruleId)
+            stmt.bind(3, record.folderPath)
+            stmt.bind(4, record.outcome.rawValue)
+            stmt.bind(5, json)
+            stmt.bind(6, ISO8601DateFormatter.forelUTC.string(from: record.createdAt))
+            stmt.bind(7, ISO8601DateFormatter.forelUTC.string(from: record.updatedAt))
+            try stmt.runToCompletion()
+            let prune = try statement(
+                "DELETE FROM rule_review_memory WHERE id NOT IN (SELECT id FROM rule_review_memory ORDER BY updated_at DESC, id LIMIT ?1)"
+            )
+            prune.bind(1, Int64(RuleReviewMemory.maximumStoredRecords))
+            try prune.runToCompletion()
+        }
+    }
+
+    public func getReviewRecord(id: String) throws -> RuleReviewRecord? {
+        let stmt = try statement("SELECT record FROM rule_review_memory WHERE id = ?1")
+        stmt.bind(1, id)
+        guard try stmt.step() else { return nil }
+        return try? Self.reviewRecordCoders().1.decode(RuleReviewRecord.self, from: Data(stmt.columnText(0).utf8))
+    }
+
+    /// Every remembered review, newest first. Records a newer Forel wrote
+    /// in a shape this one can't read are skipped.
+    public func getReviewRecords() throws -> [RuleReviewRecord] {
+        let stmt = try statement("SELECT record FROM rule_review_memory ORDER BY updated_at DESC, id")
+        let decoder = Self.reviewRecordCoders().1
+        var records: [RuleReviewRecord] = []
+        while try stmt.step() {
+            if let record = try? decoder.decode(RuleReviewRecord.self, from: Data(stmt.columnText(0).utf8)) {
+                records.append(record)
+            }
+        }
+        return records
+    }
+
+    public func countReviewRecords() throws -> Int {
+        let stmt = try statement("SELECT COUNT(*) FROM rule_review_memory")
+        guard try stmt.step() else { return 0 }
+        return Int(stmt.columnInt64(0))
+    }
+
+    public func deleteAllReviewRecords() throws {
+        try exec("DELETE FROM rule_review_memory")
     }
 }

@@ -28,6 +28,7 @@ extension Database {
         (8, { try $0.migrateV8AddHistoryPathIndexes() }),
         (9, { try $0.migrateV9AddConditionGroups() }),
         (10, { try $0.migrateV10AddRuleMatchState() }),
+        (11, { try $0.migrateV11AddRuleReviewMemory() }),
     ]
 
     func runMigrations() throws {

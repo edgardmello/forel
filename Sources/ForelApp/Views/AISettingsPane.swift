@@ -26,6 +26,7 @@ struct AISettingsPane: View {
     @State private var apiKey = ""
     @State private var keySaved = false
     @State private var showingModels = false
+    @State private var confirmingForget = false
 
     var body: some View {
         Group {
@@ -106,6 +107,48 @@ struct AISettingsPane: View {
                     .padding(14)
                 }
 
+                SectionLabel(title: "Review Memory")
+                GlassCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Remember reviews")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(ForelTheme.primaryText)
+                                Text("Forel keeps, on this Mac, what you asked for in each Review with AI, the suggestions you applied or turned down, your replies and the rule you saved. New reviews of similar rules send the most relevant of these along, so the AI follows your preferences and reuses what worked.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(ForelTheme.secondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
+                            Toggle("Remember reviews", isOn: Binding(get: { model.rememberReviews }, set: model.setRememberReviews))
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                        }
+                        HStack {
+                            Text(model.rememberedReviewCount == 0
+                                 ? "No reviews remembered."
+                                 : "\(model.rememberedReviewCount) review\(model.rememberedReviewCount == 1 ? "" : "s") remembered (up to \(RuleReviewMemory.maximumStoredRecords); the oldest are forgotten first).")
+                                .font(.system(size: 11))
+                                .foregroundStyle(ForelTheme.secondaryText)
+                            Spacer()
+                            Button("Forget Reviews…") { confirmingForget = true }
+                                .disabled(model.rememberedReviewCount == 0)
+                        }
+                    }
+                    .padding(14)
+                }
+                .alert(
+                    "Forget \(model.rememberedReviewCount) remembered review\(model.rememberedReviewCount == 1 ? "" : "s")?",
+                    isPresented: $confirmingForget
+                ) {
+                    Button("Forget Reviews", role: .destructive) { model.forgetReviews() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Review with AI will no longer know the goals, replies and decisions of your earlier reviews, and can't be given them back. Your rules aren't changed.")
+                }
+
                 SectionLabel(title: "Privacy")
                 GlassCard {
                     Text("""
@@ -115,7 +158,7 @@ struct AISettingsPane: View {
 
                     When you press Review with AI, Forel sends that rule (its conditions, actions, folder paths and scripts, \
                     with upload passwords removed), the watched folder's path, the folder's other rules and your macOS \
-                    version, the goal you describe for the rule, and, when you apply suggestions or reply to the AI, the ones you chose and what you wrote. It never sends the names or contents of your files.
+                    version, the goal you describe for the rule, and, when you apply suggestions or reply to the AI, the ones you chose and what you wrote. With Remember reviews on, it also sends what you decided in up to four similar earlier reviews: their goals, the titles of the suggestions you applied or turned down, your replies and the rules you saved, which can include other folders' paths. It never sends the names or contents of your files.
 
                     The API key is kept in your Keychain. Read a generated script or a suggested rule before saving: it runs with your permissions.
                     """)
