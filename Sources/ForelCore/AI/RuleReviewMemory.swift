@@ -154,7 +154,7 @@ public struct RuleReviewRecord: Codable, Equatable, Sendable, Identifiable {
 /// they saved for similar goals.
 public enum RuleReviewMemory {
     /// Most past reviews sent along with a new one.
-    static let maximumCases = 4
+    public static let maximumCases = 4
     /// Most characters of past reviews in one prompt.
     static let maximumPromptCharacters = 6_000
     /// A saved rule longer than this is described, not quoted.
