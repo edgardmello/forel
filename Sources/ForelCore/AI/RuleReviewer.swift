@@ -47,29 +47,37 @@ public struct RuleReviewSuggestion: Equatable, Sendable, Identifiable {
     }
 }
 
-/// What the AI service said about a rule. `improvedRule` is the reviewed
-/// rule with the proposed conditions and actions, already checked against
-/// what Forel supports, so it can be loaded into the editor as is. When the
-/// service proposed a version Forel can't use, `improvedRuleProblems` says why.
+/// Step 1 of "Review with AI": what the service found in a rule.
 public struct RuleReview: Equatable, Sendable {
     public let summary: String
     public let suggestions: [RuleReviewSuggestion]
-    public let improvedRule: Rule?
-    public let improvedRuleExplanation: String?
-    public let improvedRuleProblems: [String]
 
-    public init(
-        summary: String,
-        suggestions: [RuleReviewSuggestion],
-        improvedRule: Rule?,
-        improvedRuleExplanation: String?,
-        improvedRuleProblems: [String]
-    ) {
+    public init(summary: String, suggestions: [RuleReviewSuggestion]) {
         self.summary = summary
         self.suggestions = suggestions
-        self.improvedRule = improvedRule
-        self.improvedRuleExplanation = improvedRuleExplanation
-        self.improvedRuleProblems = improvedRuleProblems
+    }
+}
+
+/// Step 2: the rule rewritten by the service with the suggestions the user
+/// accepted, checked against what Forel supports and keeping the original
+/// rule's identity, folder, name, state and priority.
+public struct RuleEdit: Equatable, Sendable {
+    public let rule: Rule
+    public let explanation: String?
+
+    public init(rule: Rule, explanation: String?) {
+        self.rule = rule
+        self.explanation = explanation
+    }
+}
+
+/// The edited rule names something Forel doesn't have, or doesn't pass the
+/// checks Save makes.
+public struct RuleEditError: Error, Equatable, CustomStringConvertible {
+    public let problems: [String]
+    public init(problems: [String]) { self.problems = problems }
+    public var description: String {
+        "The rule the service wrote can't be used: " + problems.joined(separator: " ") + " Try again."
     }
 }
 
@@ -246,12 +254,14 @@ struct RuleBlueprint: Codable, Equatable {
 
 // MARK: - Reviewer
 
-/// "Review with AI": sends one rule to the AI service set up in
-/// Settings → AI and reads back advice and, when the service has one, a
-/// better version of the rule. What is sent: the rule (its conditions,
-/// actions, paths and embedded scripts, with upload passwords removed), the
-/// watched folder's path, the other rules of that folder, the user's
-/// optional goal, and the macOS version — never file names or contents.
+/// "Review with AI", in two steps. First the rule is analyzed on its own:
+/// Forel explains its rule model and catalog to the AI service set up in
+/// Settings → AI, which works out what the rule is for and lists concrete
+/// improvements. Then the service rewrites the rule with the suggestions
+/// the user accepted. What is sent: the rule (its conditions, actions,
+/// paths and embedded scripts, with upload passwords removed), the watched
+/// folder's path, the folder's other rules (analysis only) and the macOS
+/// version — never file names or contents.
 public enum RuleReviewer {
     /// Most other rules of the folder sent along for overlap checks.
     static let maximumSiblingRules = 20
@@ -349,9 +359,11 @@ public enum RuleReviewer {
         return Locale(identifier: "en").localizedString(forLanguageCode: code) ?? "English"
     }
 
-    public static func systemPrompt(language: String, macOSVersion: String) -> String {
+    /// What every request explains about Forel, so the model reasons about
+    /// the rule with Forel's real semantics and only proposes what exists.
+    static func forelGuide(macOSVersion: String) -> String {
         """
-        You review file-automation rules for Forel, a macOS app (similar to Hazel) on macOS \(macOSVersion). \
+        Forel is a macOS app (similar to Hazel) on macOS \(macOSVersion) that runs file-automation rules. \
         A rule watches one folder. For each file in scope Forel checks the conditions and, when they match, runs \
         the actions from top to bottom on that file. The same rule runs automatically when files change, from Run Now, \
         and in Dry Run (a preview that runs no scripts).
@@ -370,53 +382,82 @@ public enum RuleReviewer {
 
         Actions (kind (label): params):
         \(actionCatalog)
-
-        Your job: check the rule the user sends. Find mistakes (conditions that can never match or match too much, \
-        wrong order of actions, loops, unsafe deletions or overwrites, invalid values), ways to get the same result with \
-        less work or fewer steps, and, when there is one, an entirely different and better way to reach the same goal \
-        with what Forel offers. Consider the other rules of the folder for overlaps and conflicts, but only rewrite the \
-        rule under review. Don't invent conditions, actions or params that aren't listed above. Keep paths, \
-        tag names, script behavior and the user's intent unless changing them is the point of a suggestion. \
-        If the rule is already good, say so and return few or no suggestions.
-
-        Reply with one JSON object only, no Markdown, in this shape:
-        {"summary": "one or two sentences on what the rule does and how good it is",
-         "suggestions": [{"category": "problem|efficiency|simplification|safety|alternative|other", "title": "short title", "detail": "what to change and why"}],
-         "improvedRule": null or {"conditionMatch": "...", "recursionDepth": ..., "conditionGroups": [...], "actions": [...]} in exactly the format of the rule you received, applying all your suggestions,
-         "improvedRuleExplanation": "what the improved version changes, or null"}
-        Order suggestions from most to least important; at most 8. Write summary, titles, details and the explanation in \(language). \
-        Keep JSON keys, kinds, operators and param names in English as listed.
         """
     }
 
-    public static func userMessage(rule: Rule, folderPath: String?, otherRules: [Rule], goal: String) throws -> String {
+    /// Step 1: analyze the rule on its own and list concrete improvements.
+    public static func reviewSystemPrompt(language: String, macOSVersion: String) -> String {
+        """
+        You review file-automation rules for Forel. \(forelGuide(macOSVersion: macOSVersion))
+
+        Your job: work out what the rule is meant to achieve from its name, its folder, its conditions and its actions, \
+        then check it. Look for:
+        1. Mistakes: conditions that can never match or match more than intended, wrong order of actions, loops, invalid values.
+        2. Safety: permanent deletions, overwriting files, scripts that could lose data.
+        3. Efficiency: slow conditions where a cheap one is enough, scripts that a built-in action replaces, redundant steps.
+        4. Simplification: the same result with fewer or clearer conditions and actions.
+        5. Alternatives: an entirely different and better way to reach the same result with what Forel offers.
+        6. Conflicts with the folder's other rules (overlaps, a rule that takes the files first).
+        Every suggestion must be a concrete change to this rule that Forel can make with the conditions and actions listed \
+        above, specific enough to be applied without asking anything (name the condition, action, value or param). \
+        Don't invent features. If the rule is already good, say so and return few or no suggestions.
+
+        Reply with one JSON object only, no Markdown:
+        {"summary": "one or two sentences: what the rule does and how good it is",
+         "suggestions": [{"category": "problem|safety|efficiency|simplification|alternative|other", "title": "short title", "detail": "the exact change and why it is better"}]}
+        Order suggestions from most to least important; at most 8. Write the summary, titles and details in \(language). \
+        Keep kinds, operators and param names in English as listed.
+        """
+    }
+
+    /// Step 2: rewrite the rule with the suggestions the user accepted.
+    public static func editSystemPrompt(language: String, macOSVersion: String) -> String {
+        """
+        You edit file-automation rules for Forel. \(forelGuide(macOSVersion: macOSVersion))
+
+        Your job: rewrite the rule the user sends so it applies every accepted suggestion, and change nothing else. \
+        Keep paths, tag names, names, scripts and the order of untouched actions exactly as they are unless a \
+        suggestion changes them. Use only the conditions, operators, actions and params listed above, with values in \
+        the formats listed. If two suggestions conflict, follow the first one.
+
+        Reply with one JSON object only, no Markdown:
+        {"rule": {"conditionMatch": "...", "recursionDepth": ..., "conditionGroups": [...], "actions": [...]},
+         "explanation": "what you changed, in a few short sentences"}
+        "rule" uses exactly the format of the rule you received. Write the explanation in \(language).
+        """
+    }
+
+    static func encodedJSON<T: Encodable>(_ value: T) throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        func json<T: Encodable>(_ value: T) throws -> String { String(decoding: try encoder.encode(value), as: UTF8.self) }
+        return String(decoding: try encoder.encode(value), as: UTF8.self)
+    }
 
+    public static func reviewUserMessage(rule: Rule, folderPath: String?, otherRules: [Rule]) throws -> String {
         var parts: [String] = []
         if let folderPath, !folderPath.isEmpty { parts.append("Watched folder: \(folderPath)") }
-        let trimmedGoal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedGoal.isEmpty { parts.append("What I want this rule to achieve: \(trimmedGoal)") }
-        parts.append("Rule to review:\n" + (try json(RuleBlueprint(rule))))
+        parts.append("Rule to review:\n" + (try encodedJSON(RuleBlueprint(rule))))
         let siblings = otherRules.filter { $0.id != rule.id }.prefix(maximumSiblingRules)
         if !siblings.isEmpty {
-            parts.append("Other rules of this folder, in the order they run (for context only):\n" + (try json(siblings.map(RuleBlueprint.init))))
+            parts.append("Other rules of this folder, in the order they run (for context only):\n" + (try encodedJSON(siblings.map(RuleBlueprint.init))))
         }
         return parts.joined(separator: "\n\n")
     }
 
-    /// The `/chat/completions` request reviewing `rule`.
-    public static func request(
-        rule: Rule,
-        folderPath: String?,
-        otherRules: [Rule],
-        goal: String,
-        settings: AISettings,
-        apiKey: String,
-        language: String = preferredLanguageName(),
-        macOSVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
-    ) throws -> URLRequest {
+    public static func editUserMessage(rule: Rule, folderPath: String?, suggestions: [RuleReviewSuggestion]) throws -> String {
+        var parts: [String] = []
+        if let folderPath, !folderPath.isEmpty { parts.append("Watched folder: \(folderPath)") }
+        parts.append("Rule to edit:\n" + (try encodedJSON(RuleBlueprint(rule))))
+        let accepted = suggestions.enumerated().map { index, suggestion in
+            "\(index + 1). \(suggestion.title)" + (suggestion.detail.isEmpty ? "" : ": \(suggestion.detail)")
+        }
+        parts.append("Accepted suggestions:\n" + accepted.joined(separator: "\n"))
+        return parts.joined(separator: "\n\n")
+    }
+
+    /// A `/chat/completions` request with the key and address checks shared
+    /// with Generate Code.
+    static func chatRequest(system: String, user: String, settings: AISettings, apiKey: String) throws -> URLRequest {
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else {
             throw ScriptGenerationError("Add your \(settings.provider.label) API key in Settings → AI.")
@@ -437,8 +478,8 @@ public enum RuleReviewer {
             "temperature": 0.2,
             "stream": false,
             "messages": [
-                ["role": "system", "content": systemPrompt(language: language, macOSVersion: macOSVersion)],
-                ["role": "user", "content": try userMessage(rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal)],
+                ["role": "system", "content": system],
+                ["role": "user", "content": user],
             ],
         ]
         // DeepSeek and Model Studio both support JSON mode; other services
@@ -448,6 +489,43 @@ public enum RuleReviewer {
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
+    }
+
+    /// The request analyzing `rule`.
+    public static func reviewRequest(
+        rule: Rule,
+        folderPath: String?,
+        otherRules: [Rule],
+        settings: AISettings,
+        apiKey: String,
+        language: String = preferredLanguageName(),
+        macOSVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
+    ) throws -> URLRequest {
+        try chatRequest(
+            system: reviewSystemPrompt(language: language, macOSVersion: macOSVersion),
+            user: try reviewUserMessage(rule: rule, folderPath: folderPath, otherRules: otherRules),
+            settings: settings,
+            apiKey: apiKey
+        )
+    }
+
+    /// The request rewriting `rule` with the accepted `suggestions`.
+    public static func editRequest(
+        rule: Rule,
+        folderPath: String?,
+        suggestions: [RuleReviewSuggestion],
+        settings: AISettings,
+        apiKey: String,
+        language: String = preferredLanguageName(),
+        macOSVersion: String = ProcessInfo.processInfo.operatingSystemVersionString
+    ) throws -> URLRequest {
+        guard !suggestions.isEmpty else { throw ScriptGenerationError("Choose at least one suggestion to apply.") }
+        return try chatRequest(
+            system: editSystemPrompt(language: language, macOSVersion: macOSVersion),
+            user: try editUserMessage(rule: rule, folderPath: folderPath, suggestions: suggestions),
+            settings: settings,
+            apiKey: apiKey
+        )
     }
 
     // MARK: Answer
@@ -465,10 +543,9 @@ public enum RuleReviewer {
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
-    /// The review in a chat-completions answer, or the service's own error.
-    /// `rule` is the rule that was reviewed; the improved version keeps its
-    /// identity.
-    public static func review(fromResponse data: Data, statusCode: Int, rule: Rule) throws -> RuleReview {
+    /// The JSON object answering a chat-completions request, or the
+    /// service's own error.
+    static func answerObject(_ data: Data, statusCode: Int) throws -> [String: Any] {
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         guard (200..<300).contains(statusCode) else {
             throw ScriptGenerator.serviceError(statusCode: statusCode, json: json)
@@ -476,21 +553,23 @@ public enum RuleReviewer {
         guard let choices = json?["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],
               let content = message["content"] as? String else {
-            throw ScriptGenerationError("The service's answer didn't contain a review.")
+            throw ScriptGenerationError("The service's answer was empty.")
         }
-        return try review(fromContent: content, rule: rule)
-    }
-
-    static func review(fromContent content: String, rule: Rule) throws -> RuleReview {
         guard let object = jsonObject(in: content) else {
             throw ScriptGenerationError("The service's answer wasn't in the expected format. Try again, or choose another model in Settings → AI.")
         }
-        func text(_ value: Any?) -> String? {
-            guard let string = value as? String else { return nil }
-            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }
+        return object
+    }
 
+    private static func text(_ value: Any?) -> String? {
+        guard let string = value as? String else { return nil }
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// The analysis in a chat-completions answer.
+    public static func review(fromResponse data: Data, statusCode: Int) throws -> RuleReview {
+        let object = try answerObject(data, statusCode: statusCode)
         let suggestions = ((object["suggestions"] as? [[String: Any]]) ?? []).enumerated().compactMap { index, entry -> RuleReviewSuggestion? in
             let title = text(entry["title"])
             let detail = text(entry["detail"])
@@ -498,40 +577,36 @@ public enum RuleReviewer {
             let category = (text(entry["category"])?.lowercased()).flatMap(RuleReviewSuggestion.Category.init(rawValue:)) ?? .other
             return RuleReviewSuggestion(id: index, category: category, title: title ?? detail ?? "", detail: title == nil ? "" : (detail ?? ""))
         }
-
-        var improved: Rule?
-        var problems: [String] = []
-        if let raw = object["improvedRule"], !(raw is NSNull) {
-            if let data = try? JSONSerialization.data(withJSONObject: raw),
-               let blueprint = try? JSONDecoder().decode(RuleBlueprint.self, from: data) {
-                let result = blueprint.applied(to: rule)
-                if let candidate = result.rule {
-                    let restored = restoreRedactedUploads(in: candidate, from: rule)
-                    // A "better version" identical to the rule isn't one.
-                    if RuleBlueprint(restored) != RuleBlueprint(rule) { improved = restored }
-                } else {
-                    problems = result.problems
-                }
-            } else {
-                problems = ["The proposed version wasn't in Forel's rule format."]
-            }
-        }
-
         let summary = text(object["summary"]) ?? ""
-        guard !summary.isEmpty || !suggestions.isEmpty || improved != nil else {
+        guard !summary.isEmpty || !suggestions.isEmpty else {
             throw ScriptGenerationError("The service returned an empty review.")
         }
-        return RuleReview(
-            summary: summary,
-            suggestions: suggestions,
-            improvedRule: improved,
-            improvedRuleExplanation: improved == nil ? nil : text(object["improvedRuleExplanation"]),
-            improvedRuleProblems: problems
-        )
+        return RuleReview(summary: summary, suggestions: suggestions)
+    }
+
+    /// The edited rule in a chat-completions answer, checked against what
+    /// Forel supports and keeping `rule`'s identity, so it can replace the
+    /// editor's draft as is.
+    public static func edit(fromResponse data: Data, statusCode: Int, rule: Rule) throws -> RuleEdit {
+        let object = try answerObject(data, statusCode: statusCode)
+        guard let raw = object["rule"] ?? object["improvedRule"], !(raw is NSNull),
+              let ruleData = try? JSONSerialization.data(withJSONObject: raw),
+              let blueprint = try? JSONDecoder().decode(RuleBlueprint.self, from: ruleData) else {
+            throw ScriptGenerationError("The service didn't return the edited rule in Forel's format. Try again.")
+        }
+        let result = blueprint.applied(to: rule)
+        guard let candidate = result.rule else {
+            throw RuleEditError(problems: result.problems)
+        }
+        let edited = restoreRedactedUploads(in: candidate, from: rule)
+        guard RuleBlueprint(edited) != RuleBlueprint(rule) else {
+            throw ScriptGenerationError("The service returned the rule unchanged. Try again, or choose other suggestions.")
+        }
+        return RuleEdit(rule: edited, explanation: text(object["explanation"]))
     }
 
     /// The service only saw upload URLs without their password; when the
-    /// improved rule keeps such a URL, put the original one back.
+    /// edited rule keeps such a URL, put the original one back.
     static func restoreRedactedUploads(in improved: Rule, from original: Rule) -> Rule {
         let originals = original.actions.compactMap { action -> (shown: String, real: String)? in
             guard action.kind == .upload, let real = action.params[ActionParam.uploadURL]?.stringValue else { return nil }
@@ -551,25 +626,42 @@ public enum RuleReviewer {
         return rule
     }
 
-    /// Sends `rule` for review.
+    // MARK: Sending
+
+    private static func send(_ request: URLRequest, settings: AISettings, session: URLSession) async throws -> (Data, Int) {
+        do {
+            let (data, response) = try await session.data(for: request)
+            return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+        } catch let error as URLError {
+            throw ScriptGenerationError("Couldn't reach \(settings.provider.label): \(error.localizedDescription)")
+        }
+    }
+
+    /// Analyzes `rule`.
     public static func review(
         rule: Rule,
         folderPath: String?,
         otherRules: [Rule],
-        goal: String,
         settings: AISettings,
         apiKey: String,
         session: URLSession = .shared
     ) async throws -> RuleReview {
-        let request = try request(rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal, settings: settings, apiKey: apiKey)
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch let error as URLError {
-            throw ScriptGenerationError("Couldn't reach \(settings.provider.label): \(error.localizedDescription)")
-        }
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        return try review(fromResponse: data, statusCode: status, rule: rule)
+        let request = try reviewRequest(rule: rule, folderPath: folderPath, otherRules: otherRules, settings: settings, apiKey: apiKey)
+        let (data, status) = try await send(request, settings: settings, session: session)
+        return try review(fromResponse: data, statusCode: status)
+    }
+
+    /// Rewrites `rule` with the accepted `suggestions`.
+    public static func edit(
+        rule: Rule,
+        folderPath: String?,
+        suggestions: [RuleReviewSuggestion],
+        settings: AISettings,
+        apiKey: String,
+        session: URLSession = .shared
+    ) async throws -> RuleEdit {
+        let request = try editRequest(rule: rule, folderPath: folderPath, suggestions: suggestions, settings: settings, apiKey: apiKey)
+        let (data, status) = try await send(request, settings: settings, session: session)
+        return try edit(fromResponse: data, statusCode: status, rule: rule)
     }
 }

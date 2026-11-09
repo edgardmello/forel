@@ -23,7 +23,7 @@ import ForelCore
 struct ReviewRuleButton: View {
     @EnvironmentObject var model: AppModel
     let rule: Rule
-    let onUseSuggestion: (Rule) -> Void
+    let onEdited: (RuleEdit, Int) -> Void
     @State private var showing = false
 
     var body: some View {
@@ -34,15 +34,15 @@ struct ReviewRuleButton: View {
                 Label("Review with AI…", systemImage: "sparkles")
             }
             .buttonStyle(SecondaryButtonStyle())
-            .help("Ask \(model.aiSettings.provider.label) to check this rule and suggest better ways to do the same")
+            .help("\(model.aiSettings.provider.label) checks this rule and suggests better ways to do the same")
             .sheet(isPresented: $showing) {
                 RuleReviewSheet(
                     rule: rule,
                     folderPath: model.folders.first { $0.id == rule.folderId }?.path,
                     otherRules: model.rules.filter { $0.folderId == rule.folderId && $0.id != rule.id },
                     settings: model.aiSettings,
-                    onUse: { suggested in
-                        onUseSuggestion(suggested)
+                    onEdited: { edit, count in
+                        onEdited(edit, count)
                         showing = false
                     },
                     onClose: { showing = false }
@@ -52,24 +52,30 @@ struct ReviewRuleButton: View {
     }
 }
 
-/// Sends the rule as it stands in the editor for review and shows the
-/// advice. A suggested version only replaces the editor's draft when the
-/// user chooses it, and still has to be saved, so Cancel in the editor
-/// throws it away.
+/// Analyzes the rule as it stands in the editor as soon as it opens, lists
+/// the suggestions (all chosen by default), and has the service rewrite the
+/// rule with the chosen ones. The rewritten rule only replaces the editor's
+/// draft, so it still has to be saved, and Cancel in the editor throws it
+/// away.
 struct RuleReviewSheet: View {
     let rule: Rule
     let folderPath: String?
     let otherRules: [Rule]
     let settings: AISettings
-    let onUse: (Rule) -> Void
+    let onEdited: (RuleEdit, Int) -> Void
     let onClose: () -> Void
 
-    @State private var goal = ""
+    private enum Phase { case analyzing, editing }
+
     @State private var review: RuleReview?
+    @State private var chosen: Set<Int> = []
     @State private var error: String?
+    @State private var phase: Phase?
     @State private var task: Task<Void, Never>?
 
-    private var isReviewing: Bool { task != nil }
+    private var chosenSuggestions: [RuleReviewSuggestion] {
+        review?.suggestions.filter { chosen.contains($0.id) } ?? []
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -79,20 +85,6 @@ struct RuleReviewSheet: View {
                 systemImage: "sparkles"
             )
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("What should this rule achieve? (optional)")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(ForelTheme.primaryText)
-                TextField("e.g. “keep Downloads tidy: PDFs into Documents by year, old installers to the Trash”", text: $goal, axis: .vertical)
-                    .lineLimit(1...3)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(isReviewing)
-                Text("Sends this rule (conditions, actions, folder paths and scripts, without upload passwords), the watched folder's path and its other rules — never the names or contents of your files.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(ForelTheme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
             if let error {
                 Text(error)
                     .font(.system(size: 11))
@@ -101,17 +93,22 @@ struct RuleReviewSheet: View {
                     .textSelection(.enabled)
             }
 
-            if isReviewing {
-                HStack(spacing: 8) {
+            if let phase {
+                VStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Asking \(settings.provider.label)… this can take up to a minute.")
+                    Text(phase == .analyzing
+                         ? "Analyzing the rule with \(settings.provider.label)…"
+                         : "\(settings.provider.label) is editing the rule with \(chosen.count) suggestion\(chosen.count == 1 ? "" : "s")…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(ForelTheme.primaryText)
+                    Text("This can take up to a minute.")
                         .font(.system(size: 11))
                         .foregroundStyle(ForelTheme.secondaryText)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let review {
                 ScrollView {
-                    ReviewResultView(review: review, current: rule)
+                    ReviewResultView(review: review, chosen: $chosen)
                         .padding(.trailing, 6)
                 }
                 .frame(maxHeight: .infinity)
@@ -119,76 +116,104 @@ struct RuleReviewSheet: View {
                 Spacer(minLength: 0)
             }
 
+            Text("Sends this rule (conditions, actions, folder paths and scripts, without upload passwords), the watched folder's path and its other rules — never the names or contents of your files.")
+                .font(.system(size: 10))
+                .foregroundStyle(ForelTheme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
             Divider().overlay(ForelTheme.divider)
 
             HStack {
-                if review?.improvedRule != nil, !isReviewing {
-                    Text("Using the suggested version changes the editor only; review it, then Save.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(ForelTheme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
                 Spacer()
-                if isReviewing {
+                if phase != nil {
                     Button("Stop") {
                         task?.cancel()
                         task = nil
+                        phase = nil
                     }
                     .buttonStyle(SecondaryButtonStyle())
                 } else {
-                    Button(review == nil ? "Cancel" : "Close", action: onClose)
+                    Button("Close", action: onClose)
                         .buttonStyle(SecondaryButtonStyle())
                         .keyboardShortcut(.cancelAction)
-                    if let improved = review?.improvedRule {
-                        Button(review == nil ? "Review" : "Review Again", action: start)
-                            .buttonStyle(SecondaryButtonStyle())
-                        Button("Use Suggested Version") { onUse(improved) }
+                    Button("Analyze Again", action: analyze)
+                        .buttonStyle(SecondaryButtonStyle())
+                    if let review, !review.suggestions.isEmpty {
+                        Button(chosen.count > 1 ? "Apply \(chosen.count) Suggestions" : "Apply Suggestion", action: applyChosen)
                             .buttonStyle(PrimaryButtonStyle())
                             .keyboardShortcut(.defaultAction)
-                    } else {
-                        Button(review == nil ? "Review" : "Review Again", action: start)
-                            .buttonStyle(PrimaryButtonStyle())
-                            .keyboardShortcut(.defaultAction)
+                            .disabled(chosen.isEmpty)
+                            .opacity(chosen.isEmpty ? 0.5 : 1)
+                            .help("\(settings.provider.label) rewrites the rule with the chosen suggestions and loads it into the editor for you to save")
                     }
                 }
             }
         }
         .padding(22)
-        .frame(width: 760, height: review == nil && !isReviewing ? 300 : 640)
+        .frame(width: 720, height: 600)
         .background(ForelTheme.background)
+        .onAppear { if review == nil && phase == nil { analyze() } }
         .onDisappear { task?.cancel() }
     }
 
-    private func start() {
-        guard !isReviewing else { return }
+    private func analyze() {
+        guard phase == nil else { return }
         error = nil
+        phase = .analyzing
         let apiKey = AIKeychain.key(for: settings.provider.rawValue)
-        let rule = rule, folderPath = folderPath, otherRules = otherRules, goal = goal, settings = settings
+        let rule = rule, folderPath = folderPath, otherRules = otherRules, settings = settings
         task = Task {
             do {
                 let result = try await RuleReviewer.review(
-                    rule: rule,
-                    folderPath: folderPath,
-                    otherRules: otherRules,
-                    goal: goal,
-                    settings: settings,
-                    apiKey: apiKey
+                    rule: rule, folderPath: folderPath, otherRules: otherRules, settings: settings, apiKey: apiKey
                 )
-                if !Task.isCancelled { review = result }
-            } catch is CancellationError {
-            } catch let failure as ScriptGenerationError {
-                if !Task.isCancelled { error = failure.message }
+                guard !Task.isCancelled else { return }
+                review = result
+                chosen = Set(result.suggestions.map(\.id))
             } catch {
-                if !Task.isCancelled { self.error = error.localizedDescription }
+                report(error)
             }
-            task = nil
+            if !Task.isCancelled { phase = nil; task = nil }
+        }
+    }
+
+    private func applyChosen() {
+        let suggestions = chosenSuggestions
+        guard phase == nil, !suggestions.isEmpty else { return }
+        error = nil
+        phase = .editing
+        let apiKey = AIKeychain.key(for: settings.provider.rawValue)
+        let rule = rule, folderPath = folderPath, settings = settings
+        task = Task {
+            do {
+                let edit = try await RuleReviewer.edit(
+                    rule: rule, folderPath: folderPath, suggestions: suggestions, settings: settings, apiKey: apiKey
+                )
+                guard !Task.isCancelled else { return }
+                phase = nil
+                task = nil
+                onEdited(edit, suggestions.count)
+                return
+            } catch {
+                report(error)
+            }
+            if !Task.isCancelled { phase = nil; task = nil }
+        }
+    }
+
+    private func report(_ failure: Error) {
+        guard !Task.isCancelled, !(failure is CancellationError) else { return }
+        switch failure {
+        case let failure as ScriptGenerationError: error = failure.message
+        case let failure as RuleEditError: error = failure.description
+        default: error = failure.localizedDescription
         }
     }
 }
 
 private struct ReviewResultView: View {
     let review: RuleReview
-    let current: Rule
+    @Binding var chosen: Set<Int>
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -201,57 +226,38 @@ private struct ReviewResultView: View {
             }
 
             if review.suggestions.isEmpty {
-                Text("No suggestions: the service found nothing to improve.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(ForelTheme.secondaryText)
+                Label("Nothing to improve: the rule already looks good.", systemImage: "checkmark.circle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(ForelTheme.success)
             } else {
-                SectionLabel(title: "Suggestions")
+                HStack {
+                    SectionLabel(title: "Suggestions")
+                    Spacer()
+                    Button(chosen.count == review.suggestions.count ? "Choose None" : "Choose All") {
+                        chosen = chosen.count == review.suggestions.count ? [] : Set(review.suggestions.map(\.id))
+                    }
+                    .buttonStyle(.link)
+                    .font(.system(size: 11))
+                }
                 GlassCard {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(review.suggestions) { suggestion in
-                            SuggestionRow(suggestion: suggestion)
+                            SuggestionRow(
+                                suggestion: suggestion,
+                                isChosen: Binding(
+                                    get: { chosen.contains(suggestion.id) },
+                                    set: { if $0 { chosen.insert(suggestion.id) } else { chosen.remove(suggestion.id) } }
+                                )
+                            )
                         }
                     }
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
-
-            if let improved = review.improvedRule {
-                SectionLabel(title: "Suggested Version")
-                if let explanation = review.improvedRuleExplanation {
-                    Text(explanation)
-                        .font(.system(size: 11))
-                        .foregroundStyle(ForelTheme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
-                HStack(alignment: .top, spacing: 12) {
-                    RuleOutline(title: "Now", rule: current)
-                    Image(systemName: "arrow.right")
-                        .foregroundStyle(ForelTheme.secondaryText)
-                        .padding(.top, 30)
-                    RuleOutline(title: "Suggested", rule: improved)
-                }
-                if improved.actions.contains(where: { [.runScript, .runAppleScript, .runJavaScript, .delete, .upload].contains($0.kind) }) {
-                    Label("The suggested version runs a script, deletes files or uploads them. Check it and use Test before turning the rule on.", systemImage: "exclamationmark.triangle")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            } else if !review.improvedRuleProblems.isEmpty {
-                Label {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("The service also proposed a new version of the rule, but Forel can't use it:")
-                        ForEach(review.improvedRuleProblems, id: \.self) { Text("• \($0)") }
-                        Text("You can still apply the suggestions above by hand, or review again.")
-                    }
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle")
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(ForelTheme.secondaryText)
-                .textSelection(.enabled)
+                Text("Choose the suggestions to apply. Forel then asks the AI to edit the rule with them and loads the result into the editor, ready for you to check and save.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(ForelTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -260,9 +266,14 @@ private struct ReviewResultView: View {
 
 private struct SuggestionRow: View {
     let suggestion: RuleReviewSuggestion
+    @Binding var isChosen: Bool
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Toggle("", isOn: $isChosen)
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+                .accessibilityLabel("Apply “\(suggestion.title)”")
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(color)
@@ -315,112 +326,49 @@ private struct SuggestionRow: View {
     }
 }
 
-/// A compact, read-only outline of a rule's scope, conditions and actions,
-/// to compare the current rule with the suggested one.
-private struct RuleOutline: View {
-    let title: String
-    let rule: Rule
+/// Shown at the top of the rule editor after the AI edited the draft:
+/// what changed, a warning when the new version runs code, deletes or
+/// uploads, and a way back to the draft as it was.
+struct AIEditNotice: View {
+    let count: Int
+    let explanation: String?
+    let addsRiskyActions: Bool
+    let onUndo: () -> Void
+    let onDismiss: () -> Void
 
     var body: some View {
-        GlassCard {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(ForelTheme.secondaryText)
-                Text(scope)
-                    .font(.system(size: 11))
-                    .foregroundStyle(ForelTheme.secondaryText)
-                Text(matchLine)
-                    .font(.system(size: 11, weight: .medium))
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(ForelTheme.accent)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("The rule was edited with \(count) AI suggestion\(count == 1 ? "" : "s"). Check it, use Test, then Save — or Undo.")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(ForelTheme.primaryText)
-                ForEach(Array(rule.conditionGroups.enumerated()), id: \.offset) { _, group in
-                    VStack(alignment: .leading, spacing: 2) {
-                        if rule.conditionGroups.count > 1 {
-                            Text(group.match == .any ? "Any of:" : "All of:")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(ForelTheme.secondaryText)
-                        }
-                        ForEach(Array(group.conditions.enumerated()), id: \.offset) { _, condition in
-                            Text("• \(condition.kind.label) \(condition.operator.label) \(displayValue(condition))")
-                        }
-                    }
-                    .padding(.leading, rule.conditionGroups.count > 1 ? 8 : 0)
+                if let explanation {
+                    Text(explanation)
+                        .font(.system(size: 11))
+                        .foregroundStyle(ForelTheme.secondaryText)
+                        .textSelection(.enabled)
                 }
-                Text("Actions")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(ForelTheme.primaryText)
-                    .padding(.top, 4)
-                ForEach(Array(rule.actions.sorted { $0.position < $1.position }.enumerated()), id: \.offset) { index, action in
-                    Text("\(index + 1). \(actionLine(action))")
+                if addsRiskyActions {
+                    Label("The new version runs a script, deletes files or uploads them. Test it before turning the rule on.", systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
                 }
             }
-            .font(.system(size: 11))
-            .foregroundStyle(ForelTheme.primaryText)
-            .textSelection(.enabled)
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-        }
-        .frame(maxWidth: .infinity, alignment: .top)
-    }
-
-    private var scope: String {
-        switch rule.recursionDepth {
-        case nil: return "This folder and all subfolders"
-        case 0?: return "This folder only"
-        case let depth?: return "This folder and \(depth) level\(depth == 1 ? "" : "s") of subfolders"
-        }
-    }
-
-    private var matchLine: String {
-        if rule.conditions.isEmpty { return "Every file" }
-        let mode = rule.conditionGroups.count > 1 ? rule.conditionMatch : (rule.conditionMatch == ConditionMatch.none ? ConditionMatch.none : rule.conditionGroups[0].match)
-        let noun = rule.conditionGroups.count > 1 ? "groups" : "conditions"
-        switch mode {
-        case .all: return "When all \(noun) match"
-        case .any: return "When any \(noun.dropLast()) matches"
-        case .none: return "When no \(noun.dropLast()) matches"
-        }
-    }
-
-    private func displayValue(_ condition: Condition) -> String {
-        if condition.kind == .spotlightMetadata, let parsed = SpotlightMetadataCondition.parse(condition.value) {
-            return "\(parsed.key) = \(parsed.value)"
-        }
-        return "“\(condition.value)”"
-    }
-
-    private func actionLine(_ action: Action) -> String {
-        let p = action.params
-        let detail: String?
-        switch action.kind {
-        case .moveToFolder, .copyToFolder, .syncToFolder, .syncFolders:
-            detail = p[ActionParam.destination]?.stringValue
-        case .sortIntoSubfolder: detail = p[ActionParam.subfolder]?.stringValue
-        case .rename: detail = p[ActionParam.pattern]?.stringValue
-        case .upload: detail = p[ActionParam.uploadURL]?.stringValue.map(UploadDestination.displayString(for:))
-        case .addTag, .removeTag:
-            detail = p[ActionParam.tags]?.arrayValue?.compactMap(\.stringValue).joined(separator: ", ") ?? p["tag"]?.stringValue
-        case .setColorLabel: detail = p[ActionParam.color]?.stringValue
-        case .addComment: detail = p[ActionParam.comment]?.stringValue
-        case .runScript, .runAppleScript, .runJavaScript:
-            if ScriptSource.of(action) == .file {
-                detail = p[ActionParam.scriptPath]?.stringValue
-            } else {
-                let lines = (p[ActionParam.script]?.stringValue ?? "").split(separator: "\n")
-                detail = lines.first.map { lines.count > 1 ? "\($0) … (\(lines.count) lines)" : String($0) }
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            Button("Undo", action: onUndo)
+                .buttonStyle(SecondaryButtonStyle())
+                .help("Go back to the rule as it was before the AI edited it")
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
             }
-        case .runShortcut: detail = p[ActionParam.shortcutName]?.stringValue
-        case .openApplication: detail = p[ActionParam.applicationPath]?.stringValue.map { ($0 as NSString).lastPathComponent }
-        case .makeAlias: detail = p[ActionParam.aliasDestination]?.stringValue
-        case .convertImage: detail = p[ActionParam.imageFormat]?.stringValue?.uppercased()
-        case .displayNotification: detail = p[ActionParam.notificationTitle]?.stringValue
-        case .runAutomatorWorkflow: detail = p[ActionParam.workflowPath]?.stringValue.map { ($0 as NSString).lastPathComponent }
-        case .importToLibrary: detail = LibraryType(rawValue: p[ActionParam.libraryType]?.stringValue ?? "")?.label
-        case .pause:
-            if case .number(let seconds)? = p[ActionParam.pauseSeconds] { detail = "\(Int(seconds)) s" } else { detail = nil }
-        default: detail = nil
+            .buttonStyle(IconButtonStyle())
+            .help("Hide this message")
         }
-        guard let detail, !detail.isEmpty else { return action.kind.label }
-        return "\(action.kind.label): \(detail)"
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(ForelTheme.accent.opacity(0.10)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(ForelTheme.accent.opacity(0.25)))
     }
 }

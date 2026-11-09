@@ -114,8 +114,8 @@ struct AISettingsPane: View {
                     script uses commands that work here. Generate Code never sends file names, paths, file contents, or your rules.
 
                     When you press Review with AI, Forel sends that rule (its conditions, actions, folder paths and scripts, \
-                    with upload passwords removed), the watched folder's path, the folder's other rules, what you say the \
-                    rule should achieve, and your macOS version. It never sends the names or contents of your files.
+                    with upload passwords removed), the watched folder's path, the folder's other rules and your macOS \
+                    version, and, when you apply suggestions, the ones you chose. It never sends the names or contents of your files.
 
                     The API key is kept in your Keychain. Read a generated script or a suggested rule before saving: it runs with your permissions.
                     """)
