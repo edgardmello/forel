@@ -61,7 +61,7 @@ struct RuleReviewerTests {
         let messages = try #require(body["messages"] as? [[String: String]])
         let system = try #require(messages.first?["content"])
         #expect(system.contains("in Portuguese"))
-        #expect(system.contains("work out what the rule is meant to achieve"))
+        #expect(system.contains("otherwise work out what it is meant to achieve"))
         let user = try #require(messages.last?["content"])
         #expect(user.contains("Watched folder: /Users/me/Downloads"))
         #expect(user.contains("\"kind\" : \"extension\""))
