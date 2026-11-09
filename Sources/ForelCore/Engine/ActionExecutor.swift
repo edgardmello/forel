@@ -246,14 +246,8 @@ public enum ActionExecutor {
         case .rename:
             return try renameFile(action, path: path)
         case .sortIntoSubfolder:
-            let subfolder = try stringParam(action, ActionParam.subfolder, "SortIntoSubfolder")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !subfolder.isEmpty,
-                  !(subfolder as NSString).isAbsolutePath,
-                  !subfolder.split(separator: "/").contains("..") else {
-                throw ActionError("Sort into subfolder requires a relative path")
-            }
-            let destination = ((path as NSString).deletingLastPathComponent as NSString).appendingPathComponent(subfolder)
+            let raw = try stringParam(action, ActionParam.subfolder, "SortIntoSubfolder")
+            let destination = try sortDestination(raw, path: path)
             return try moveIntoDir(path: path, destDir: destination, resolution: conflictResolution(action))
         case .syncToFolder:
             return try syncToFolder(action, path: path)
@@ -342,6 +336,30 @@ public enum ActionExecutor {
     private static func expandedDestination(_ action: Action, path: String, _ kind: String) throws -> String {
         let raw = try stringParam(action, ActionParam.destination, kind)
         return try TokenExpander.expand(raw, path: path)
+    }
+
+    /// The folder a Sort into subfolder action moves `path` into: the
+    /// subfolder path with its tokens expanded (`{year}/{month}` becomes
+    /// `2026/07`), inside the file's current folder. Checked after
+    /// expansion too, so a captured value can't point outside it.
+    static func sortDestination(_ raw: String, path: String) throws -> String {
+        let subfolder = try TokenExpander.expand(raw.trimmingCharacters(in: .whitespacesAndNewlines), path: path)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !subfolder.isEmpty,
+              !(subfolder as NSString).isAbsolutePath,
+              !subfolder.split(separator: "/").contains("..") else {
+            throw ActionError("Sort into subfolder requires a relative path")
+        }
+        return ((path as NSString).deletingLastPathComponent as NSString).appendingPathComponent(subfolder)
+    }
+
+    /// Notification title/body with their tokens expanded; a token that
+    /// can't be resolved leaves the text as typed rather than dropping the
+    /// notification.
+    private static func expandedNotificationText(_ action: Action, _ key: String, path: String) -> String {
+        let raw = action.params[key]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard raw.contains("{") else { return raw }
+        return (try? TokenExpander.expand(raw, path: path)) ?? raw
     }
 
     /// Moves `path` into `destDir` (created if needed). `resolution` decides
@@ -845,8 +863,8 @@ public enum ActionExecutor {
 
     private static func displayNotification(_ action: Action, path: String) {
         #if canImport(UserNotifications)
-        let title = action.params[ActionParam.notificationTitle]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let body = action.params[ActionParam.notificationBody]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title: String? = expandedNotificationText(action, ActionParam.notificationTitle, path: path)
+        let body: String? = expandedNotificationText(action, ActionParam.notificationBody, path: path)
         Task {
             let center = UNUserNotificationCenter.current()
             let settings = await center.notificationSettings()
@@ -1642,7 +1660,7 @@ public enum ActionExecutor {
             guard !subfolder.isEmpty else {
                 return ActionPlan(kind: action.kind, description: "Sort into subfolder", sourcePath: path, targetPath: nil, status: .wouldSkip, finalPath: path, copiedPath: nil, isTerminal: false)
             }
-            let destDir = ((path as NSString).deletingLastPathComponent as NSString).appendingPathComponent(subfolder)
+            let destDir = try sortDestination(subfolder, path: path)
             let naiveTarget = (destDir as NSString).appendingPathComponent(fileName)
             let resolution = conflictResolution(action)
             let conflicts = FileManager.default.fileExists(atPath: naiveTarget)
@@ -1900,7 +1918,7 @@ public enum ActionExecutor {
         case .convertImage, .compressPDF, .makeSearchablePDF:
             return conversionPlan(action, path: path)
         case .displayNotification:
-            let title = action.params[ActionParam.notificationTitle]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let title = expandedNotificationText(action, ActionParam.notificationTitle, path: path)
             return ActionPlan(kind: action.kind, description: title.isEmpty ? "Display notification" : "Display notification: \(title)", sourcePath: path, targetPath: nil, status: .wouldRun, finalPath: path, copiedPath: nil, isTerminal: false)        }
     }
 

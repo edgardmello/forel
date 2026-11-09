@@ -37,6 +37,14 @@ struct TokenExpanderTests {
         #expect(result == "{not_a_token}")
     }
 
+    @Test func unknownTokensAreThoseForelLeavesAsTyped() {
+        #expect(TokenExpander.unknownTokens(in: "{year}-{month}-{day}/{name}.{extension}").isEmpty)
+        #expect(TokenExpander.unknownTokens(in: "{date}/{date}/{today}") == ["{date}", "{today}"])
+        #expect(TokenExpander.unknownTokens(in: "{client}", captureNames: ["client"]).isEmpty)
+        #expect(TokenExpander.unknownTokens(in: #"{content:IPTU (\d{4})} {ai:the owner}"#).isEmpty)
+        #expect(TokenExpander.unknownTokens(in: "Today").isEmpty)
+    }
+
     // MARK: - {content:REGEX} tokens
 
     @Test func contentTokenCapturesFirstGroupAndNestsRegexBraces() throws {

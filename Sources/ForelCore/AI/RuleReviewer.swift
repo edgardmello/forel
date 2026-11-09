@@ -231,6 +231,7 @@ struct RuleBlueprint: Codable, Equatable {
             actions.append(ForelCore.Action(ruleId: base.id, kind: kind, params: params, position: Int64(index)))
         }
         if actions.isEmpty { problems.append("The proposed version has no actions.") }
+        problems += RuleReviewer.unknownTokenProblems(in: actions, conditionGroups: groups, base: base)
 
         let depth = hasRecursionDepth ? recursionDepth.map { max(0, $0) } : base.recursionDepth
         var rule = base
@@ -275,6 +276,50 @@ public enum RuleReviewer {
         return .object(dict)
     }
 
+    // MARK: Tokens
+
+    /// The params of `kind` whose text goes through `TokenExpander`.
+    static func tokenParams(_ kind: ActionKind) -> [String] {
+        switch kind {
+        case .moveToFolder, .copyToFolder: return [ActionParam.destination]
+        case .sortIntoSubfolder: return [ActionParam.subfolder]
+        case .rename: return [ActionParam.pattern]
+        case .addComment: return [ActionParam.comment]
+        case .displayNotification: return [ActionParam.notificationTitle, ActionParam.notificationBody]
+        default: return []
+        }
+    }
+
+    /// Named groups of the regex conditions, which become tokens too.
+    static func captureNames(_ groups: [ConditionGroup]) -> Set<String> {
+        Set(groups.flatMap(\.conditions).filter { $0.operator == .matchesRegex }
+            .flatMap { ConditionEvaluator.captureGroupNames(in: $0.value) })
+    }
+
+    static func unknownTokens(in actions: [ForelCore.Action], captureNames: Set<String>) -> [(token: String, kind: ActionKind)] {
+        actions.flatMap { action in
+            tokenParams(action.kind).flatMap { key in
+                TokenExpander.unknownTokens(in: action.params[key]?.stringValue ?? "", captureNames: captureNames)
+                    .map { (token: $0, kind: action.kind) }
+            }
+        }
+    }
+
+    /// A token Forel doesn't fill in stays in the name as typed — a folder
+    /// literally called "{date}". Flags the ones the service introduced;
+    /// ones the user's own rule already had are left alone.
+    static func unknownTokenProblems(in actions: [ForelCore.Action], conditionGroups: [ConditionGroup], base: Rule) -> [String] {
+        let existing = Set(unknownTokens(in: base.actions, captureNames: captureNames(base.conditionGroups)).map(\.token))
+        let known = TokenExpander.builtInTokens.map { "{\($0.token)}" }.joined(separator: ", ")
+        return unknownTokens(in: actions, captureNames: captureNames(conditionGroups))
+            .filter { !existing.contains($0.token) }
+            .map { "“\($0.token)” in \($0.kind.label) isn't a Forel token, so it would be used literally. Forel's tokens are \(known), {content:REGEX}, {ai:QUESTION} and named regex groups." }
+    }
+
+    static var tokenCatalog: String {
+        TokenExpander.builtInTokens.map { "- {\($0.token)}: \($0.meaning)" }.joined(separator: "\n")
+    }
+
     // MARK: Prompt
 
     static func valueFormat(_ kind: ConditionKind) -> String {
@@ -311,7 +356,7 @@ public enum RuleReviewer {
         case .moveToFolder, .copyToFolder:
             return "destination: absolute folder path, tokens allowed; \(conflict)"
         case .sortIntoSubfolder:
-            return "subfolder: relative path inside the watched folder, tokens allowed, e.g. \"{year}/{month}\"; \(conflict)"
+            return "subfolder: path relative to the file's current folder (the watched folder when recursionDepth is 0), tokens allowed, e.g. \"{year}/{month}\" or a fixed name like \"Today\"; \(conflict)"
         case .syncToFolder:
             return "destination: absolute folder path; \(conflict)"
         case .syncFolders:
@@ -373,7 +418,17 @@ public enum RuleReviewer {
         - recursionDepth: 0 = only the watched folder itself, N = N levels of subfolders, null = every subfolder. Subfolders themselves are items too.
         - conditionGroups: conditions inside a group combine by the group's match ("all" or "any"); groups combine by the rule's conditionMatch ("all", "any" or "none"). No conditions matches every file in scope.
         - Text comparisons are case-sensitive, except extension (without the dot) and tags. The name condition compares the name without its extension ("is" also accepts the full name). matches_regex uses ICU regular expressions (add (?i) to ignore case); named groups like (?<year>\\d{4}) become {year} tokens in the actions and $FOREL_CAPTURE_YEAR in scripts.
-        - Tokens in rename patterns, destinations, subfolders and notifications: {name} (name without extension), {extension}, {current_date}, {year}, {month}, {day}, {date_modified}, {date_created}, {size}, {content:REGEX} (first match in the file's text, group 1 if any; suffix |title, |upper, |lower or |padN).
+        - Tokens work only in these params: destination (move_to_folder, copy_to_folder), subfolder, rename pattern, comment, \
+        notification_title and notification_body. These are the only tokens; any other {word} is not replaced and ends up \
+        literally in the name (a folder called "{date}"), so never invent one:
+        \(tokenCatalog)
+        - {content:REGEX}: first match of REGEX in the file's text (group 1 if any; suffix |title, |upper, |lower or |padN).
+        - {ai:QUESTION}: a value Apple's on-device model reads from the file's text, e.g. {ai:the invoice number}.
+        - {NAME}: the named group NAME of a matches_regex condition of this rule.
+        - Date tokens use the moment the rule runs, not the file's date: use {date_modified}/{date_created} or a named regex group for that. \
+        A folder that should always have the same name (e.g. "Today") is written as that plain name, without tokens.
+        - within_last "1 day" means the last 24 hours, not "since midnight". A rule only acts on files that match it, \
+        so it can't empty a folder by itself: emptying a "Today" folder of older files needs a second rule that watches that folder.
         - When a file is moved, renamed or copied, the following actions work on the new file. Forel re-checks files it changed, so a rule whose actions leave the file still matching its conditions can act on it again; an "ignore" action or a condition the result no longer meets prevents loops.
         - Rules of a folder run in order; an earlier rule that moves a file away means later rules don't see it.
         - Prefer built-in actions to scripts: they can be undone, show in Dry Run, and are faster. Cheap conditions (name, extension, kind, size, dates) are checked before slow ones (contents, AI, duplicate), but avoiding slow conditions when a cheap one is enough still helps.
@@ -399,9 +454,12 @@ public enum RuleReviewer {
         4. Simplification: the same result with fewer or clearer conditions and actions.
         5. Alternatives: an entirely different and better way to reach the same result with what Forel offers.
         6. Conflicts with the folder's other rules (overlaps, a rule that takes the files first).
-        Every suggestion must be a concrete change to this rule that Forel can make with the conditions and actions listed \
-        above, specific enough to be applied without asking anything (name the condition, action, value or param). \
-        Don't invent features. If the rule is already good, say so and return few or no suggestions.
+        Every suggestion must be a concrete change to this rule that Forel can make with the conditions, actions, params \
+        and tokens listed above, specific enough to be applied without asking anything (name the condition, action, value \
+        or param). Don't invent features, tokens or params. When the goal names something a condition checks directly \
+        (the app or website a file was downloaded with, a kind, a tag), suggest that condition. If the goal needs another \
+        rule as well (for example one in a different folder), describe that rule in a suggestion of category "alternative": \
+        you can only change this one. If the rule is already good, say so and return few or no suggestions.
 
         Reply with one JSON object only, no Markdown:
         {"summary": "one or two sentences: what the rule does and how good it is",
@@ -418,8 +476,9 @@ public enum RuleReviewer {
 
         Your job: rewrite the rule the user sends so it applies every accepted suggestion, and change nothing else. \
         Keep paths, tag names, names, scripts and the order of untouched actions exactly as they are unless a \
-        suggestion changes them. Use only the conditions, operators, actions and params listed above, with values in \
-        the formats listed. If two suggestions conflict, follow the first one.
+        suggestion changes them. Use only the conditions, operators, actions, params and tokens listed above, with values \
+        in the formats listed; Forel rejects a rule with anything else. If two suggestions conflict, follow the first one. \
+        A suggestion about another rule can't be applied here: leave it out and say so in the explanation.
 
         Reply with one JSON object only, no Markdown:
         {"rule": {"conditionMatch": "...", "recursionDepth": ..., "conditionGroups": [...], "actions": [...]},

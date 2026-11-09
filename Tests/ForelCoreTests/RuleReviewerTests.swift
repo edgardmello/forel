@@ -194,6 +194,46 @@ struct RuleReviewerTests {
         }
     }
 
+    @Test func editedRuleWithATokenForelDoesntHaveIsRejected() throws {
+        let rule = sampleRule()
+        func edit(_ subfolder: String, condition: String = #"{"kind": "extension", "operator": "is", "value": "pdf"}"#) throws -> RuleEdit {
+            try RuleReviewer.edit(fromResponse: answer("""
+            {"rule": {"conditionMatch": "all", "conditionGroups": [{"match": "all", "conditions": [\(condition)]}],
+               "actions": [{"kind": "sort_into_subfolder", "params": {"subfolder": "\(subfolder)"}}]}}
+            """), statusCode: 200, rule: rule)
+        }
+        do {
+            _ = try edit("{date}")
+            Issue.record("expected the edit to be rejected")
+        } catch let error as RuleEditError {
+            #expect(error.problems.contains { $0.contains("{date}") && $0.contains("Sort into subfolder") })
+        }
+        #expect(try edit("{year}-{month}-{day}").rule.actions[0].params[ActionParam.subfolder]?.stringValue == "{year}-{month}-{day}")
+        #expect(try edit("Today").rule.actions.count == 1)
+        let named = #"{"kind": "name", "operator": "matches_regex", "value": "^(?<client>[a-z]+)_"}"#
+        #expect(try edit("{client}", condition: named).rule.actions.count == 1)
+
+        // A literal brace the user wrote themselves isn't the service's doing.
+        var own = rule
+        own.actions = [Action(ruleId: rule.id, kind: .rename, params: .object([ActionParam.pattern: .string("{draft} {name}.{extension}")]), position: 0)]
+        let kept = try RuleReviewer.edit(fromResponse: answer("""
+        {"rule": {"conditionMatch": "any", "conditionGroups": [{"match": "all", "conditions": [{"kind": "extension", "operator": "is", "value": "pdf"}]}],
+           "actions": [{"kind": "rename", "params": {"pattern": "{draft} {name}.{extension}"}}]}}
+        """), statusCode: 200, rule: own)
+        #expect(kept.rule.conditionMatch == .any)
+    }
+
+    @Test func promptsListTheRealTokensAndWarnAgainstInventedOnes() {
+        for prompt in [RuleReviewer.reviewSystemPrompt(language: "English", macOSVersion: "26.0"),
+                       RuleReviewer.editSystemPrompt(language: "English", macOSVersion: "26.0")] {
+            for token in TokenExpander.builtInTokens {
+                #expect(prompt.contains("- {\(token.token)}: "), "missing token \(token.token)")
+            }
+            #expect(prompt.contains("never invent one"))
+            #expect(prompt.contains("needs a second rule"))
+        }
+    }
+
     @Test func missingScopeKeepsTheRulesAndAnUnchangedEditIsRejected() throws {
         let rule = sampleRule()
         var object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(RuleBlueprint(rule))) as? [String: Any])

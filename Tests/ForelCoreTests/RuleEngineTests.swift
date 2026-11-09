@@ -38,6 +38,24 @@ import Foundation
         #expect(FileManager.default.fileExists(atPath: file))
     }
 
+    @Test func sortIntoSubfolderExpandsTokensTheSameWayInPreviewAndRunNow() throws {
+        let dir = TempDir()
+        let file = dir.file("acme_invoice.txt", contents: "paid")
+        let sort = makeAction(.sortIntoSubfolder, .object([ActionParam.subfolder: .string("{client}/{year}-{month}-{day}")]))
+        let rule = makeRule(name: "by client", conditions: [makeCondition(.name, .matchesRegex, #"^(?<client>[a-z]+)_"#)], actions: [sort])
+
+        let preview = try #require(RuleEngine.previewFile(path: file, depth: 0, rules: [rule]))
+        let result = RuleEngine.run(path: file, depth: 0, rules: [rule], batchId: "sort")
+
+        let target = try #require(preview.rules[0].actions[0].targetPath)
+        #expect(!target.contains("{"))
+        #expect(target.contains("/acme/"))
+        #expect(result.history.count == 1)
+        #expect(result.history[0].status == .applied)
+        #expect(result.history[0].resultPath == target)
+        #expect(FileManager.default.fileExists(atPath: target))
+    }
+
     @Test func evaluateFileMatchesEnabledRulesWithAllOrAnyConditions() throws {
         let dir = TempDir()
         let file = dir.file("invoice.txt", contents: "paid")

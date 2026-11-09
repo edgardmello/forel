@@ -121,6 +121,18 @@ import Foundation
     }
 
 
+    @Test func sortIntoSubfolderExpandsDateTokens() throws {
+        let dir = TempDir()
+        let file = dir.file("download.zip", contents: "zip")
+        let sort = makeAction(.sortIntoSubfolder, .object([ActionParam.subfolder: .string("{year}-{month}-{day}")]))
+        let plan = try ActionExecutor.plan(sort, path: file)
+        let moved = try ActionExecutor.execute(sort, path: file).newPath
+        let folder = ((moved as NSString).deletingLastPathComponent as NSString).lastPathComponent
+        #expect(moved == plan.targetPath)
+        #expect(folder == TokenExpander.previewExpand("{current_date}"))
+        #expect(FileManager.default.fileExists(atPath: moved))
+    }
+
     @Test func localFileActionsExecuteAndPlanConsistently() throws {
         let dir = TempDir()
 

@@ -1391,7 +1391,7 @@ private struct ActionRow: View {
         case .rename:
             RenamePatternEditor(pattern: paramBinding(ActionParam.pattern), cleanFileName: action.params[ActionParam.cleanFileName]?.boolValue == true)
         case .sortIntoSubfolder:
-            GlassField(placeholder: "Subfolder path", text: paramBinding(ActionParam.subfolder))
+            GlassField(placeholder: "Subfolder path, e.g. Today or {year}/{month}", text: paramBinding(ActionParam.subfolder))
         case .upload:
             GlassField(placeholder: "FTP, SFTP, or WebDAV destination URL", text: paramBinding(ActionParam.uploadURL))
         case .addTag, .removeTag:
