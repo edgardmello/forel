@@ -75,10 +75,14 @@ struct RuleListView: View {
         GeometryReader { proxy in
             content
                 .sheet(item: $editingRule, onDismiss: { editingAIEdit = nil }) { rule in
-                    RuleEditorView(rule: rule, aiEdit: editingAIEdit, preferredHeight: editorHeight(for: proxy.size.height)) { saved in
-                        model.saveRule(saved)
-                        editingRule = nil
-                    } onCancel: {
+                    RuleEditorView(
+                        rule: rule,
+                        linkedFolderIds: model.linkedFolderIds(for: rule),
+                        aiEdit: editingAIEdit,
+                        preferredHeight: editorHeight(for: proxy.size.height)
+                    ) { saved, destinations, unlink in
+                        try model.saveRule(saved, sharingWith: destinations, unlink: unlink)
+                    } onClose: {
                         editingRule = nil
                     }
                 }

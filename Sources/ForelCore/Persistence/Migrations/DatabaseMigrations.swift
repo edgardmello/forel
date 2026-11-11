@@ -29,6 +29,7 @@ extension Database {
         (9, { try $0.migrateV9AddConditionGroups() }),
         (10, { try $0.migrateV10AddRuleMatchState() }),
         (11, { try $0.migrateV11AddRuleReviewMemory() }),
+        (12, { try $0.migrateV12AddSharedRules() }),
     ]
 
     func runMigrations() throws {

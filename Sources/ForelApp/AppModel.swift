@@ -808,21 +808,16 @@ final class AppModel: ObservableObject {
         reloadFolders()
     }
 
-    func saveRule(_ rule: Rule) {
-        do {
-            let isUpdate = rules.contains(where: { $0.id == rule.id })
-            try db.withLock { db in
-                if isUpdate {
-                    try db.updateRule(rule)
-                } else {
-                    try db.insertRule(rule)
-                }
-            }
-            if !paused { coordinator.refreshWatchedPaths() }
-            reloadRules()
-        } catch {
-            showError(error)
+    func linkedFolderIds(for rule: Rule) -> Set<String> {
+        db.withLock { (try? $0.linkedFolderIds(for: rule.id)) ?? [] }
+    }
+
+    func saveRule(_ rule: Rule, sharingWith folderIds: Set<String>, unlink: Bool) throws {
+        try db.withLock { db in
+            try db.saveRule(rule, sharingWith: folderIds, unlink: unlink)
         }
+        if !paused { coordinator.refreshWatchedPaths() }
+        reloadRules()
     }
 
     func deleteRule(_ rule: Rule) {
@@ -927,7 +922,12 @@ final class AppModel: ObservableObject {
     /// Moves a rule to another folder, keeping its id (and history) intact.
     func moveRule(_ rule: Rule, toFolder folderId: String) {
         guard folderId != rule.folderId else { return }
-        db.withLock { db in try? db.moveRule(rule.id, toFolder: folderId) }
+        do {
+            try db.withLock { db in try db.moveRule(rule.id, toFolder: folderId) }
+        } catch {
+            showError(error)
+            return
+        }
         clearRuleExpansionState(rule.id)
         if !paused { coordinator.refreshWatchedPaths() }
         reloadRules()

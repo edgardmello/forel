@@ -24,6 +24,85 @@ import SQLite3
         try Database(path: ":memory:")
     }
 
+    @Test func sharingPropagatesBasicsAndGroupedConditionsWhileKeepingLocalSettings() throws {
+        let dir = TempDir()
+        let db = try Database(path: dir.path + "/forel.db")
+        let source = WatchedFolder(path: dir.dir("Source"))
+        let target = WatchedFolder(path: dir.dir("Target"))
+        let third = WatchedFolder(path: dir.dir("Third"))
+        for folder in [source, target, third] { try db.insertFolder(folder) }
+        try db.insertRule(makeRule(folderId: target.id, name: "Existing rule"))
+
+        var original = makeRule(folderId: source.id, name: "Documents", recursionDepth: 2)
+        original.conditions = [makeCondition(.extension_, .is, "pdf", ruleId: original.id)]
+        original.actions = [makeAction(.rename, .object(["pattern": .string("source.pdf")]), ruleId: original.id)]
+        try db.saveRule(original, sharingWith: [target.id, third.id])
+        try db.saveRule(original, sharingWith: [target.id, third.id])
+
+        let reopened = try Database(path: dir.path + "/forel.db")
+        let targetRules = try reopened.listRules(folderId: target.id)
+        #expect(targetRules.count == 2)
+        var linked = try #require(targetRules.last)
+        #expect(linked.id != original.id)
+        #expect(!linked.enabled)
+        #expect(linked.actions.isEmpty)
+        #expect(linked.priority == 1)
+        #expect(linked.recursionDepth == 2)
+        #expect(linked.conditions.map(\.value) == ["pdf"])
+        #expect(linked.conditions.map(\.ruleId) == [linked.id])
+        #expect(try reopened.linkedFolderIds(for: linked.id) == [source.id, third.id])
+        #expect(throws: SQLiteError.self) { try reopened.moveRule(linked.id, toFolder: source.id) }
+
+        linked.name = "Reports"
+        linked.recursionDepth = nil
+        linked.conditionMatch = .any
+        linked.conditionGroups.append(ConditionGroup(match: .all, conditions: [
+            makeCondition(.name, .contains, "Report", ruleId: linked.id)
+        ]))
+        linked.actions = [makeAction(.rename, .object(["pattern": .string("target.pdf")]), ruleId: linked.id)]
+        try reopened.updateRule(linked)
+
+        let updated = try #require(try db.listRules(folderId: source.id).first)
+        #expect(updated.name == "Reports")
+        #expect(updated.recursionDepth == nil)
+        #expect(updated.conditionMatch == .any)
+        #expect(updated.conditionGroups.map(\.match) == linked.conditionGroups.map(\.match))
+        #expect(updated.conditions.map(\.value) == ["pdf", "Report"])
+        #expect(updated.conditions.allSatisfy { $0.ruleId == original.id })
+        #expect(updated.enabled)
+        #expect(updated.actions == original.actions)
+        #expect(try db.listRules(folderId: third.id).first?.name == "Reports")
+
+        let copy = updated.duplicated(inFolder: third.id)
+        try db.insertRule(copy)
+        #expect(try db.linkedFolderIds(for: copy.id).isEmpty)
+
+        linked.name = "Local reports"
+        try reopened.saveRule(linked, sharingWith: [], unlink: true)
+        try reopened.deleteFolder(source.id)
+        #expect(try db.linkedFolderIds(for: linked.id).isEmpty)
+        #expect(try db.listRules(folderId: target.id).last == linked)
+        #expect(try db.listRules(folderId: third.id).first?.name == "Reports")
+    }
+
+    @Test func failedSharingRollsBackEditsAndNewLinks() throws {
+        let db = try makeDB()
+        let source = WatchedFolder(path: "/tmp/forel-sharing-source")
+        let target = WatchedFolder(path: "/tmp/forel-sharing-target")
+        try db.insertFolder(source)
+        try db.insertFolder(target)
+        var original = makeRule(folderId: source.id, name: "Original")
+        try db.insertRule(original)
+        original.name = "Edited"
+
+        #expect(throws: SQLiteError.self) {
+            try db.saveRule(original, sharingWith: [target.id, "missing-folder"])
+        }
+        #expect(try db.listRules(folderId: source.id).first?.name == "Original")
+        #expect(try db.linkedFolderIds(for: original.id).isEmpty)
+        #expect(try db.listRules(folderId: target.id).isEmpty)
+    }
+
     @Test func reorderedActionsArePersistedInTheirNewOrder() throws {
         let db = try makeDB()
         let folder = WatchedFolder(path: "/tmp/forel-test-\(UUID().uuidString)")

@@ -60,20 +60,33 @@ struct RuleEditorView: View {
     /// hidden, so Save, Undo or Cancel can record how the review ended.
     @State private var aiReviewId: String?
     @State private var showingJSON = false
+    @State private var showingFolderSharing = false
+    @State private var newSharedFolderIds: Set<String> = []
+    @State private var unlinkFromFolders = false
+    @State private var saveFailure: String?
     @EnvironmentObject private var model: AppModel
     private let preferredHeight: CGFloat
-    let onSave: (Rule) -> Void
-    let onCancel: () -> Void
+    private let linkedFolderIds: Set<String>
+    let onSave: (Rule, Set<String>, Bool) throws -> Void
+    let onClose: () -> Void
 
     /// `aiEdit` opens the editor on a rule "Review with AI" already rewrote
     /// (from the rule list), with the notice and Undo shown.
-    init(rule: Rule, aiEdit: AIEditState? = nil, preferredHeight: CGFloat = 680, onSave: @escaping (Rule) -> Void, onCancel: @escaping () -> Void) {
+    init(
+        rule: Rule,
+        linkedFolderIds: Set<String>,
+        aiEdit: AIEditState? = nil,
+        preferredHeight: CGFloat = 680,
+        onSave: @escaping (Rule, Set<String>, Bool) throws -> Void,
+        onClose: @escaping () -> Void
+    ) {
         _rule = State(initialValue: rule)
         _aiEdit = State(initialValue: aiEdit)
         _aiReviewId = State(initialValue: aiEdit?.reviewId)
         self.preferredHeight = max(680, preferredHeight)
+        self.linkedFolderIds = linkedFolderIds
         self.onSave = onSave
-        self.onCancel = onCancel
+        self.onClose = onClose
     }
 
     var body: some View {
@@ -97,6 +110,9 @@ struct RuleEditorView: View {
             if showValidationErrors, !validationMessages.isEmpty {
                 RuleValidationBanner(messages: validationMessages)
             }
+            if let saveFailure {
+                RuleValidationBanner(messages: ["Couldn’t save this rule. \(saveFailure)"])
+            }
             if let aiEdit {
                 AIEditNotice(
                     count: aiEdit.count,
@@ -119,6 +135,9 @@ struct RuleEditorView: View {
                         VStack(alignment: .leading, spacing: 14) {
                             GlassField(placeholder: "Rule name", text: $rule.name)
                             ScopeEditor(depth: $rule.recursionDepth)
+                            if model.folders.contains(where: { $0.id != rule.folderId }) {
+                                folderSharing
+                            }
 
                             if rule.conditionGroups.count < 2 {
                                 // Classic single-group picker: reads/writes the
@@ -277,7 +296,7 @@ struct RuleEditorView: View {
                     .disabled(model.isTestingRule || rule.name.trimmingCharacters(in: .whitespaces).isEmpty)
                 Button("Cancel") {
                     finishReview(.discarded)
-                    onCancel()
+                    onClose()
                 }
                 .buttonStyle(SecondaryButtonStyle())
                 Button("Save") {
@@ -286,8 +305,14 @@ struct RuleEditorView: View {
                     } else {
                         showValidationErrors = false
                         errorDismissTask?.cancel()
-                        finishReview(.saved, savedRule: rule)
-                        onSave(rule)
+                        let destinations = unlinkFromFolders ? [] : newSharedFolderIds
+                        do {
+                            try onSave(rule, destinations, unlinkFromFolders)
+                            finishReview(.saved, savedRule: rule)
+                            onClose()
+                        } catch {
+                            saveFailure = "\(error)"
+                        }
                     }
                 }
                     .buttonStyle(PrimaryButtonStyle())
@@ -300,6 +325,65 @@ struct RuleEditorView: View {
         .background(ForelTheme.background)
         .background(WindowActivationBridge())
         .onDisappear { model.cancelRuleTest() }
+    }
+
+    private var folderSharing: some View {
+        let sharedCount = linkedFolderIds.count + newSharedFolderIds.count
+        return VStack(alignment: .leading, spacing: 6) {
+            Button {
+                showingFolderSharing = true
+            } label: {
+                Label("Share Basics & Conditions…", systemImage: "folder.badge.plus")
+            }
+            .popover(isPresented: $showingFolderSharing, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Share Basics & Conditions").font(.headline)
+                    Text("Each folder has its own actions and enabled setting. New linked rules start disabled with no actions.")
+                        .foregroundStyle(.secondary)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(model.folders.filter { $0.id != rule.folderId }, id: \.id) { folder in
+                                if linkedFolderIds.contains(folder.id) {
+                                    Label(folder.path, systemImage: "link")
+                                        .textSelection(.enabled)
+                                        .accessibilityHint("Already linked")
+                                } else {
+                                    Toggle(isOn: Binding(
+                                        get: { newSharedFolderIds.contains(folder.id) },
+                                        set: { selected in
+                                            if selected {
+                                                newSharedFolderIds.insert(folder.id)
+                                            } else {
+                                                newSharedFolderIds.remove(folder.id)
+                                            }
+                                        }
+                                    )) {
+                                        Text(folder.path).textSelection(.enabled)
+                                    }
+                                    .toggleStyle(.checkbox)
+                                    .disabled(unlinkFromFolders)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 200)
+                    if !linkedFolderIds.isEmpty {
+                        Toggle("Make this folder’s rule independent on save", isOn: $unlinkFromFolders)
+                            .toggleStyle(.checkbox)
+                    }
+                }
+                .padding(16)
+                .frame(width: 385)
+            }
+            if unlinkFromFolders {
+                Text("Saving will keep this rule and stop sharing its settings.")
+                    .foregroundStyle(.secondary)
+            } else if sharedCount > 0 {
+                Text("Saving applies Basics and Conditions to \(sharedCount) other \(sharedCount == 1 ? "folder" : "folders").")
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     /// Dry-runs the draft as it stands in the editor (see
@@ -469,6 +553,7 @@ private struct RuleValidationBanner: View {
                     Text(message)
                         .font(.system(size: 11))
                         .foregroundStyle(ForelTheme.danger)
+                        .textSelection(.enabled)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
