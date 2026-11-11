@@ -31,7 +31,7 @@ extension ISO8601DateFormatter {
 /// `~/Library/Application Support/com.lab421.forel/forel.db` (migrated
 /// automatically from the legacy `com.forel.app` location) keeps working.
 public final class Database: @unchecked Sendable {
-    public static let currentSchemaVersion: Int64 = 11
+    public static let currentSchemaVersion: Int64 = 12
 
     private let handle: OpaquePointer
     private let lock = NSLock()
@@ -549,61 +549,134 @@ public final class Database: @unchecked Sendable {
     }
 
     public func insertRule(_ rule: Rule) throws {
-        let priority = try nextRulePriority(folderId: rule.folderId)
-        try transaction {
-            let stmt = try statement(
-                """
-                INSERT INTO rules (id, folder_id, name, enabled, condition_match, recursion_depth, priority, created_at)
-                VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
-                """
-            )
-            stmt.bind(1, rule.id)
-            stmt.bind(2, rule.folderId)
-            stmt.bind(3, rule.name)
-            stmt.bind(4, bool: rule.enabled)
-            stmt.bind(5, rule.conditionMatch.rawValue)
-            stmt.bind(6, rule.recursionDepth ?? -1)
-            stmt.bind(7, priority)
-            stmt.bind(8, rule.createdAt)
-            try stmt.runToCompletion()
+        try transaction { try insertRuleRow(rule) }
+    }
 
-            for (position, group) in rule.conditionGroups.enumerated() {
-                try insertConditionGroup(group, ruleId: rule.id, position: position)
-            }
-            for action in rule.actions { try insertAction(action) }
+    private func insertRuleRow(_ rule: Rule) throws {
+        let priority = try nextRulePriority(folderId: rule.folderId)
+        let stmt = try statement(
+            """
+            INSERT INTO rules (id, folder_id, name, enabled, condition_match, recursion_depth, priority, created_at)
+            VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
+            """
+        )
+        stmt.bind(1, rule.id)
+        stmt.bind(2, rule.folderId)
+        stmt.bind(3, rule.name)
+        stmt.bind(4, bool: rule.enabled)
+        stmt.bind(5, rule.conditionMatch.rawValue)
+        stmt.bind(6, rule.recursionDepth ?? -1)
+        stmt.bind(7, priority)
+        stmt.bind(8, rule.createdAt)
+        try stmt.runToCompletion()
+
+        for (position, group) in rule.conditionGroups.enumerated() {
+            try insertConditionGroup(group, ruleId: rule.id, position: position)
         }
+        for action in rule.actions { try insertAction(action) }
     }
 
     public func updateRule(_ rule: Rule) throws {
         try transaction {
-            let stmt = try statement(
-                "UPDATE rules SET name=?1, enabled=?2, condition_match=?3, recursion_depth=?4, priority=?5 WHERE id=?6"
-            )
-            stmt.bind(1, rule.name)
-            stmt.bind(2, bool: rule.enabled)
-            stmt.bind(3, rule.conditionMatch.rawValue)
-            stmt.bind(4, rule.recursionDepth ?? -1)
-            stmt.bind(5, rule.priority)
-            stmt.bind(6, rule.id)
-            try stmt.runToCompletion()
-
-            let deleteConditions = try statement("DELETE FROM conditions WHERE rule_id=?1")
-            deleteConditions.bind(1, rule.id)
-            try deleteConditions.runToCompletion()
-
-            let deleteGroups = try statement("DELETE FROM condition_groups WHERE rule_id=?1")
-            deleteGroups.bind(1, rule.id)
-            try deleteGroups.runToCompletion()
-
-            let deleteActions = try statement("DELETE FROM actions WHERE rule_id=?1")
-            deleteActions.bind(1, rule.id)
-            try deleteActions.runToCompletion()
-
-            for (position, group) in rule.conditionGroups.enumerated() {
-                try insertConditionGroup(group, ruleId: rule.id, position: position)
-            }
-            for action in rule.actions { try insertAction(action) }
+            try updateRuleRows(rule)
         }
+    }
+
+    /// Saves the editor draft and its folder links as one change. New members
+    /// have their own rule identity, actions, history and enabled state.
+    public func saveRule(_ rule: Rule, sharingWith folderIds: Set<String>, unlink: Bool = false) throws {
+        try transaction {
+            if let folderId = try ruleFolderId(rule.id) {
+                guard folderId == rule.folderId else {
+                    throw SQLiteError("This rule moved to another folder. Reopen it before saving.")
+                }
+                if unlink { try setSharedRuleId(nil, for: rule.id) }
+                try updateRuleRows(rule)
+            } else {
+                try insertRuleRow(rule)
+            }
+
+            let existing = try linkedRuleFolders(rule.id)
+            let destinations = folderIds.subtracting(existing.values).subtracting([rule.folderId])
+            guard !destinations.isEmpty else { return }
+            let groupId = try sharedRuleId(rule.id) ?? UUID().uuidString
+            try setSharedRuleId(groupId, for: rule.id)
+
+            for folderId in destinations {
+                var linked = Rule(
+                    folderId: folderId,
+                    name: rule.name,
+                    conditionMatch: rule.conditionMatch,
+                    recursionDepth: rule.recursionDepth
+                )
+                linked.conditionGroups = rule.copiedConditionGroups(for: linked.id)
+                try insertRuleRow(linked)
+                try setSharedRuleId(groupId, for: linked.id)
+            }
+        }
+    }
+
+    public func linkedFolderIds(for ruleId: String) throws -> Set<String> {
+        Set(try linkedRuleFolders(ruleId).values)
+    }
+
+    private func linkedRuleFolders(_ ruleId: String) throws -> [String: String] {
+        let stmt = try statement(
+            """
+            SELECT id, folder_id FROM rules
+            WHERE shared_rule_id=(SELECT shared_rule_id FROM rules WHERE id=?1) AND id<>?1
+            """
+        )
+        stmt.bind(1, ruleId)
+        var folders: [String: String] = [:]
+        while try stmt.step() { folders[stmt.columnText(0)] = stmt.columnText(1) }
+        return folders
+    }
+
+    private func sharedRuleId(_ ruleId: String) throws -> String? {
+        let stmt = try statement("SELECT shared_rule_id FROM rules WHERE id=?1")
+        stmt.bind(1, ruleId)
+        guard try stmt.step() else { return nil }
+        return stmt.columnTextOrNil(0)
+    }
+
+    private func setSharedRuleId(_ groupId: String?, for ruleId: String) throws {
+        let stmt = try statement("UPDATE rules SET shared_rule_id=?1 WHERE id=?2")
+        stmt.bind(1, groupId)
+        stmt.bind(2, ruleId)
+        try stmt.runToCompletion()
+    }
+
+    private func updateRuleRows(_ rule: Rule) throws {
+        let basics = try statement(
+            """
+            UPDATE rules SET name=?1, condition_match=?2, recursion_depth=?3
+            WHERE id=?4 OR shared_rule_id=(SELECT shared_rule_id FROM rules WHERE id=?4)
+            """
+        )
+        basics.bind(1, rule.name)
+        basics.bind(2, rule.conditionMatch.rawValue)
+        basics.bind(3, rule.recursionDepth ?? -1)
+        basics.bind(4, rule.id)
+        try basics.runToCompletion()
+
+        if try listConditionGroups(ruleId: rule.id) != rule.conditionGroups {
+            try replaceConditionGroups(rule.conditionGroups, for: rule.id)
+            for ruleId in try linkedRuleFolders(rule.id).keys {
+                try replaceConditionGroups(rule.copiedConditionGroups(for: ruleId), for: ruleId)
+            }
+        }
+
+        let local = try statement("UPDATE rules SET enabled=?1, priority=?2 WHERE id=?3")
+        local.bind(1, bool: rule.enabled)
+        local.bind(2, rule.priority)
+        local.bind(3, rule.id)
+        try local.runToCompletion()
+
+        let deleteActions = try statement("DELETE FROM actions WHERE rule_id=?1")
+        deleteActions.bind(1, rule.id)
+        try deleteActions.runToCompletion()
+        for action in rule.actions { try insertAction(action) }
     }
 
     public func deleteRule(_ id: String) throws {
@@ -613,6 +686,9 @@ public final class Database: @unchecked Sendable {
     }
 
     public func moveRule(_ ruleId: String, toFolder folderId: String) throws {
+        guard try !linkedFolderIds(for: ruleId).contains(folderId) else {
+            throw SQLiteError("This folder already has a linked version of the rule.")
+        }
         let priority = try nextRulePriority(folderId: folderId)
         let stmt = try statement("UPDATE rules SET folder_id=?1, priority=?2 WHERE id=?3")
         stmt.bind(1, folderId)
@@ -652,6 +728,20 @@ public final class Database: @unchecked Sendable {
     }
 
     // MARK: - Conditions
+
+    private func replaceConditionGroups(_ groups: [ConditionGroup], for ruleId: String) throws {
+        let deleteConditions = try statement("DELETE FROM conditions WHERE rule_id=?1")
+        deleteConditions.bind(1, ruleId)
+        try deleteConditions.runToCompletion()
+
+        let deleteGroups = try statement("DELETE FROM condition_groups WHERE rule_id=?1")
+        deleteGroups.bind(1, ruleId)
+        try deleteGroups.runToCompletion()
+
+        for (position, group) in groups.enumerated() {
+            try insertConditionGroup(group, ruleId: ruleId, position: position)
+        }
+    }
 
     /// Groups in stored order, each with its conditions (insertion order,
     /// matching the pre-groups behaviour).

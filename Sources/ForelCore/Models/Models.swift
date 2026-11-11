@@ -317,19 +317,22 @@ public struct Rule: Codable, Equatable, Sendable {
             priority: priority,
             createdAt: ISO8601DateFormatter.forelUTC.string(from: Date())
         )
-        copy.conditionGroups = conditionGroups.map { group in
-            ConditionGroup(
-                id: UUID().uuidString,
-                match: group.match,
-                conditions: group.conditions.map {
-                    Condition(ruleId: newId, kind: $0.kind, operator: $0.operator, value: $0.value)
-                }
-            )
-        }
+        copy.conditionGroups = copiedConditionGroups(for: newId)
         copy.actions = actions.map {
             Action(ruleId: newId, kind: $0.kind, params: $0.params, position: $0.position)
         }
         return copy
+    }
+
+    func copiedConditionGroups(for ruleId: String) -> [ConditionGroup] {
+        conditionGroups.map { group in
+            ConditionGroup(
+                match: group.match,
+                conditions: group.conditions.map {
+                    Condition(ruleId: ruleId, kind: $0.kind, operator: $0.operator, value: $0.value)
+                }
+            )
+        }
     }
 
     /// Flat projection of every condition, in group order. Setting it

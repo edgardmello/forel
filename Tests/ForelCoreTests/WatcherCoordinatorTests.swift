@@ -57,6 +57,54 @@ import Foundation
         try Database(path: ":memory:")
     }
 
+    @Test func linkedConditionsDrivePreviewManualRunAndWatcherWithFolderSpecificActions() throws {
+        let db = try makeDB()
+        let source = TempDir()
+        let target = TempDir()
+        let sourceFolder = WatchedFolder(path: source.path)
+        let targetFolder = WatchedFolder(path: target.path)
+        try db.insertFolder(sourceFolder)
+        try db.insertFolder(targetFolder)
+
+        var original = makeRule(folderId: sourceFolder.id, name: "Reports")
+        original.conditions = [makeCondition(.extension_, .is, "txt", ruleId: original.id)]
+        original.actions = [makeAction(.rename, .object(["pattern": .string("manual.pdf")]), ruleId: original.id)]
+        try db.saveRule(original, sharingWith: [targetFolder.id])
+
+        var linked = try #require(try db.listRules(folderId: targetFolder.id).first)
+        linked.enabled = true
+        linked.actions = [makeAction(.rename, .object(["pattern": .string("automatic.pdf")]), ruleId: linked.id)]
+        try db.updateRule(linked)
+        original.conditionGroups[0].conditions[0].value = "pdf"
+        try db.updateRule(original)
+
+        let manualInput = source.file("report.pdf", contents: "manual")
+        let automaticInput = target.file("report.pdf", contents: "automatic")
+        let ignored = target.file("report.txt", contents: "ignored")
+        let manualRules = try db.listRules(folderId: sourceFolder.id).filter(\.enabled)
+        let automaticRules = try db.listRules(folderId: targetFolder.id).filter(\.enabled)
+        let manualOutput = source.path + "/manual.pdf"
+        let automaticOutput = target.path + "/automatic.pdf"
+        let preview = RuleEngine.previewFile(path: automaticInput, depth: 0, rules: automaticRules, root: target.path)
+        #expect(preview?.rules.first?.actions.first?.targetPath == automaticOutput)
+        #expect(RuleEngine.previewFile(path: ignored, depth: 0, rules: automaticRules, root: target.path) == nil)
+        #expect(!FileManager.default.fileExists(atPath: automaticOutput))
+
+        for entry in RuleEngine.walkEntries(root: source.path, maxDepth: RuleEngine.maxRuleDepth(manualRules)) {
+            _ = RuleEngine.run(path: entry.path, depth: entry.depth, rules: manualRules, batchId: "manual", root: source.path)
+        }
+        #expect(!FileManager.default.fileExists(atPath: manualInput))
+        #expect(FileManager.default.fileExists(atPath: manualOutput))
+
+        let coordinator = WatcherCoordinator(db: db)
+        coordinator.handle(path: ignored)
+        coordinator.handle(path: automaticInput)
+        #expect(FileManager.default.fileExists(atPath: ignored))
+        #expect(!FileManager.default.fileExists(atPath: automaticInput))
+        #expect(FileManager.default.fileExists(atPath: automaticOutput))
+        #expect(try db.listHistory().map(\.ruleId) == [linked.id])
+    }
+
     @Test func invalidUploadIsSkippedByTheWatcherWithoutTouchingTheFile() throws {
         let db = try makeDB()
         let dir = TempDir()
