@@ -8,7 +8,7 @@ extension UTType {
     /// Payload type of an action being reordered. Deliberately not plain text:
     /// text fields accept dropped text, so a plain-text payload could write an
     /// action id into a script or rename-pattern field.
-    static let forelActionID = UTType(exportedAs: "com.lab421.forel.action-id")
+    static let forelActionID = UTType(exportedAs: "io.github.edgardmello.forel.action-id")
 }
 
 /// Handles a local action reorder without consuming drops from other apps.

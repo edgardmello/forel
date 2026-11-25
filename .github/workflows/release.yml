@@ -1,11 +1,12 @@
 name: Release
 
-# Required to publish the Homebrew cask to lab421/homebrew-tap:
-#   HOMEBREW_TAP_TOKEN (a PAT with `contents: write` on that repo)
-# Required to sign release apps and DMGs:
+# Optional. Without these secrets the release is built with an ad-hoc
+# signature and not notarized: it still installs and updates itself, but
+# macOS asks to confirm opening it the first time.
+# To sign release apps and DMGs with a Developer ID:
 #   APPLE_SIGNING_CERT_P12_BASE64 (base64-encoded Developer ID Application P12)
 #   APPLE_SIGNING_CERT_PASSWORD (P12 export password)
-# Required to notarize release apps and DMGs:
+# To notarize them (needs the Developer ID too):
 #   NOTARY_API_KEY_P8 (base64-encoded App Store Connect API private key)
 #   NOTARY_KEY_ID (App Store Connect API key ID)
 #   NOTARY_ISSUER_ID (App Store Connect API issuer UUID)
@@ -54,14 +55,16 @@ jobs:
           swift --version
 
       - name: Import Developer ID certificate
+        id: signing
         env:
           APPLE_SIGNING_CERT_P12_BASE64: ${{ secrets.APPLE_SIGNING_CERT_P12_BASE64 }}
           APPLE_SIGNING_CERT_PASSWORD: ${{ secrets.APPLE_SIGNING_CERT_PASSWORD }}
         run: |
           set -euo pipefail
           if [[ -z "$APPLE_SIGNING_CERT_P12_BASE64" || -z "$APPLE_SIGNING_CERT_PASSWORD" ]]; then
-            echo "Apple signing certificate secrets are missing" >&2
-            exit 1
+            echo "No Developer ID secrets: building an ad-hoc signed release."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           certificate_path="$RUNNER_TEMP/apple-signing-certificate.p12"
@@ -96,20 +99,27 @@ jobs:
           fi
 
           echo "CODE_SIGN_IDENTITY=$signing_identity" >> "$GITHUB_ENV"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
 
       - name: Build and package
         id: package
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+          SIGNED: ${{ steps.signing.outputs.signed }}
           NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
           set -euo pipefail
-          ./build.sh package universal "$RELEASE_TAG" --sign --notarize
+          if [[ "$SIGNED" == "true" ]]; then
+            ./build.sh package universal "$RELEASE_TAG" --sign --notarize
+          else
+            ./build.sh package universal "$RELEASE_TAG"
+          fi
           echo "dmg_path=dist/release/Forel-${RELEASE_TAG}.dmg" >> "$GITHUB_OUTPUT"
 
       - name: Verify notarized release
+        if: steps.signing.outputs.signed == 'true'
         env:
           DMG_PATH: ${{ steps.package.outputs.dmg_path }}
         run: |
@@ -155,6 +165,8 @@ jobs:
           name: release-dmg
           path: dist/release/*.dmg
           if-no-files-found: error
+    outputs:
+      signed: ${{ steps.signing.outputs.signed }}
 
   publish:
     needs: build
@@ -173,6 +185,7 @@ jobs:
         id: notes
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+          SIGNED: ${{ needs.build.outputs.signed }}
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
@@ -197,7 +210,11 @@ jobs:
             echo ""
             echo "1. Download \`Forel-${RELEASE_TAG}.dmg\`."
             echo "2. Open it and drag **Forel** into **Applications**."
-            echo "3. Forel is signed with an Apple Developer ID certificate and notarized by Apple."
+            if [[ "$SIGNED" == "true" ]]; then
+              echo "3. Forel is signed with an Apple Developer ID certificate and notarized by Apple."
+            else
+              echo "3. This build isn't notarized: the first time, right-click Forel in Applications and choose **Open**."
+            fi
             echo "__FOREL_EOF__"
           } >> "$GITHUB_OUTPUT"
 
@@ -208,69 +225,3 @@ jobs:
           prerelease: false
           make_latest: true
           body: ${{ steps.notes.outputs.BODY }}
-
-  homebrew:
-    needs: publish
-    runs-on: macos-14
-    steps:
-      - name: Download release files
-        uses: actions/download-artifact@v4
-        with:
-          path: dist/release
-          merge-multiple: true
-
-      - name: Checkout homebrew-tap
-        uses: actions/checkout@v4
-        with:
-          repository: lab421/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-tap
-
-      - name: Update Cask
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          sha="$(shasum -a 256 "dist/release/Forel-${GITHUB_REF_NAME}.dmg" | cut -d ' ' -f1)"
-
-          cat > homebrew-tap/Casks/forel.rb <<EOF
-          cask "forel" do
-            version "${version}"
-            sha256 "${sha}"
-
-            url "https://github.com/lab421/forel/releases/download/v#{version}/Forel-v#{version}.dmg"
-            name "Forel"
-            desc "File-automation app that watches folders and runs rules"
-            homepage "https://github.com/lab421/forel"
-
-            livecheck do
-              url :url
-              strategy :github_latest
-              regex(/^v?(\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)\$/i)
-            end
-
-            depends_on macos: :ventura
-
-            app "Forel.app"
-
-            zap trash: [
-              "~/Library/Application Support/com.lab421.forel",
-              "~/Library/Caches/com.lab421.forel",
-              "~/Library/Application Support/com.forel.app",
-              "~/Library/Caches/com.forel.app",
-            ]
-          end
-          EOF
-
-      - name: Commit and push
-        run: |
-          set -euo pipefail
-          cd homebrew-tap
-          git config user.name "forel-release-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add Casks/forel.rb
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-          git commit -m "forel ${GITHUB_REF_NAME#v}"
-          git push

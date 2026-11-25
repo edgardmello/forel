@@ -245,15 +245,20 @@ import Foundation
 
         let plan = try ActionExecutor.plan(action, path: file)
         let destination = try #require(UploadDestination.url(from: value))
-        let arguments = UploadDestination.curlArguments(sourcePath: file, destination: destination)
+        let command = UploadDestination.curlCommand(sourcePath: file, destination: destination, password: nil)
+        let arguments = command.arguments
 
         #expect(plan.status == .wouldRun)
         #expect(plan.description == "Upload to sftp://example.com/incoming/report.txt")
         #expect(!plan.description.contains("secret"))
         #expect(arguments.contains("--connect-timeout"))
         #expect(arguments.contains("--speed-time"))
+        #expect(arguments.contains("--max-time"))
         #expect(arguments.contains("--ftp-create-dirs"))
-        #expect(arguments.suffix(2) == ["--", destination.absoluteString])
+        // A password typed in the URL goes to curl on standard input.
+        #expect(!arguments.contains { $0.contains("secret") })
+        #expect(arguments.suffix(2) == ["--", "sftp://example.com/incoming/report.txt"])
+        #expect(command.standardInput == "user = \"alice:secret\"\n")
     }
 
     @Test func invalidUploadDestinationPlansASkip() throws {

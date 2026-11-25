@@ -358,18 +358,73 @@ public enum UploadDestination {
         return components.string ?? value
     }
 
-    static func curlArguments(sourcePath: String, destination: URL) -> [String] {
+    /// Upper bound for one upload, so a stalled or very slow transfer can't
+    /// hold up the files waiting behind it forever.
+    static let maxUploadSeconds = 3600
+
+    /// The Keychain account an upload password is saved under:
+    /// `scheme://user@host[:port]`, or `nil` when the URL names no user.
+    public static func credentialAccount(for url: URL) -> String? {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let user = components.user, !user.isEmpty,
+              let host = components.host?.lowercased(), !host.isEmpty,
+              let scheme = components.scheme?.lowercased() else { return nil }
+        let port = components.port.map { ":\($0)" } ?? ""
+        return "\(scheme)://\(user)@\(host)\(port)"
+    }
+
+    /// Splits the password out of an upload URL typed with one
+    /// (`sftp://user:secret@host/dir`), so it can be kept in the Keychain
+    /// and the rule stores only `sftp://user@host/dir`. `nil` when the
+    /// value has no password.
+    public static func separatingPassword(_ value: String) -> (value: String, account: String, password: String)? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard url(from: trimmed) != nil,
+              var components = URLComponents(string: trimmed),
+              let password = components.password, !password.isEmpty,
+              let url = components.url,
+              let account = credentialAccount(for: url) else { return nil }
+        components.password = nil
+        guard let stripped = components.string else { return nil }
+        return (stripped, account, password)
+    }
+
+    /// The `curl` invocation for an upload. Credentials never go on the
+    /// command line, where any process could read them: with a password the
+    /// user name and password are sent as a config on standard input and
+    /// left out of the URL. Without one, a user name in the URL stays there
+    /// so `~/.netrc` can still supply its password.
+    static func curlCommand(sourcePath: String, destination: URL, password: String?) -> (arguments: [String], standardInput: String?) {
         var arguments = [
             "--fail", "--silent", "--show-error",
             "--connect-timeout", "30", "--speed-limit", "1", "--speed-time", "60",
+            "--max-time", String(maxUploadSeconds),
             "--netrc-optional",
             "--proto", "=ftp,ftps,sftp,http,https",
         ]
         if ["ftp", "ftps", "sftp"].contains(destination.scheme?.lowercased() ?? "") {
             arguments.append("--ftp-create-dirs")
         }
-        arguments += ["--upload-file", sourcePath, "--", destination.absoluteString]
-        return arguments    }
+        var target = destination
+        var standardInput: String?
+        var components = URLComponents(url: destination, resolvingAgainstBaseURL: false)
+        let inlinePassword = components?.password.flatMap { $0.isEmpty ? nil : $0 }
+        if let user = components?.user, !user.isEmpty, let secret = password ?? inlinePassword {
+            components?.user = nil
+            components?.password = nil
+            if let stripped = components?.url { target = stripped }
+            standardInput = "user = \"\(configEscaped(user)):\(configEscaped(secret))\"\n"
+            arguments += ["--config", "-"]
+        }
+        arguments += ["--upload-file", sourcePath, "--", target.absoluteString]
+        return (arguments, standardInput)
+    }
+
+    private static func configEscaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
 }
 
 /// The abstract shape of an action parameter; the UI maps it to a concrete editor.

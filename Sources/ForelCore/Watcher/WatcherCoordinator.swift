@@ -277,10 +277,10 @@ public final class WatcherCoordinator: @unchecked Sendable {
 
         if handleSyncTargetChange(path: path) { return }
 
-        guard let (folder, rules) = db.withLock({ db -> (WatchedFolder, [Rule])? in
+        guard let (folder, rules, nested) = db.withLock({ db -> (WatchedFolder, [Rule], Set<String>)? in
             guard let folder = try? db.folderForPath(path) else { return nil }
             let rules = (try? db.listRules(folderId: folder.id)) ?? []
-            return (folder, rules)
+            return (folder, rules, db.nestedWatchedFolderPaths(under: folder.path))
         }) else { return }
 
         beginProcessing(root: folder.path)
@@ -288,7 +288,7 @@ public final class WatcherCoordinator: @unchecked Sendable {
 
         guard let depth = RuleEngine.pathDepth(root: folder.path, path: path) else { return }
         let batchId = UUID().uuidString
-        let (matched, history) = RuleEngine.run(path: path, depth: depth, rules: rules, batchId: batchId, root: folder.path)
+        let (matched, history) = RuleEngine.run(path: path, depth: depth, rules: rules, batchId: batchId, root: folder.path, nestedRoots: nested)
         record(matched: matched, history: history, path: path, rules: rules)
     }
 
@@ -518,10 +518,10 @@ public final class WatcherCoordinator: @unchecked Sendable {
             return
         }
 
-        guard let (folder, rules) = db.withLock({ db -> (WatchedFolder, [Rule])? in
+        guard let (folder, rules, nested) = db.withLock({ db -> (WatchedFolder, [Rule], Set<String>)? in
             guard let folder = try? db.folderForPath(root) else { return nil }
             let rules = (try? db.listRules(folderId: folder.id)) ?? []
-            return (folder, rules)
+            return (folder, rules, db.nestedWatchedFolderPaths(under: folder.path))
         }) else { return }
         guard let rootDepth = RuleEngine.pathDepth(root: folder.path, path: root) else { return }
 
@@ -534,7 +534,7 @@ public final class WatcherCoordinator: @unchecked Sendable {
             if waitsForSettledFiles {
                 awaitSettled(path, includingContents: false)
             } else {
-                handle(path: path, depth: depth, rules: rules, watchedRoot: folder.path)
+                handle(path: path, depth: depth, rules: rules, watchedRoot: folder.path, nestedRoots: nested)
             }
         }
 
@@ -552,7 +552,7 @@ public final class WatcherCoordinator: @unchecked Sendable {
             remainingDepth = nil
         }
 
-        RuleEngine.forEachEntry(root: root, maxDepth: remainingDepth) { entry in
+        RuleEngine.forEachEntry(root: root, maxDepth: remainingDepth, skipping: nested) { entry in
             guard let depth = RuleEngine.pathDepth(root: folder.path, path: entry.path) else { return }
             process(entry.path, depth)
         }
@@ -587,40 +587,63 @@ public final class WatcherCoordinator: @unchecked Sendable {
     /// connected. Files already handled and unchanged since are skipped.
     public func catchUp(watchedFolders paths: [String]) {
         processingQueue.async { [weak self] in
-            for path in paths { self?.performCatchUp(root: path) }
+            for path in paths { _ = self?.performCatchUp(root: path) }
         }
     }
 
-    /// Synchronous body of `catchUp(watchedFolders:)`, for tests.
-    func performCatchUp(root: String) {
-        let rules = db.withLock { db -> [Rule] in
-            guard let folder = ((try? db.listFolders()) ?? []).first(where: { $0.enabled && $0.path == root }) else { return [] }
-            return (try? db.listRules(folderId: folder.id)) ?? []
+    /// Forel wasn't running since `since` (quit, crashed, or the Mac was
+    /// off): runs every folder's rules on the files that arrived in it after
+    /// that, as the watcher would have. Files that were already there are
+    /// left alone. Reports how many files were checked.
+    public func catchUpAfterDowntime(watchedFolders paths: [String], since: Date, completion: @escaping @Sendable (Int) -> Void) {
+        processingQueue.async { [weak self] in
+            guard let self else { return }
+            var checked = 0
+            for path in paths { checked += self.performCatchUp(root: path, arrivedAfter: since) }
+            completion(checked)
+        }
+    }
+
+    /// Synchronous body of `catchUp(watchedFolders:)`, for tests. With
+    /// `arrivedAfter`, only files added to the folder after that date are
+    /// run. Returns how many files were run.
+    @discardableResult
+    func performCatchUp(root: String, arrivedAfter: Date? = nil) -> Int {
+        let (rules, nested) = db.withLock { db -> ([Rule], Set<String>) in
+            guard let folder = ((try? db.listFolders()) ?? []).first(where: { $0.enabled && $0.path == root }) else { return ([], []) }
+            return ((try? db.listRules(folderId: folder.id)) ?? [], db.nestedWatchedFolderPaths(under: root))
         }
         let enabled = rules.filter(\.enabled)
-        guard !enabled.isEmpty, FileManager.default.fileExists(atPath: root) else { return }
+        guard !enabled.isEmpty, FileManager.default.fileExists(atPath: root) else { return 0 }
         beginProcessing(root: root)
-        RuleEngine.forEachEntry(root: root, maxDepth: RuleEngine.maxRuleDepth(enabled)) { entry in
+        var checked = 0
+        RuleEngine.forEachEntry(root: root, maxDepth: RuleEngine.maxRuleDepth(enabled), skipping: nested) { entry in
             guard settling[entry.path] == nil, settlingAncestor(of: entry.path) == nil else { return }
-            handle(path: entry.path, depth: entry.depth, rules: rules, watchedRoot: root)
+            if let arrivedAfter {
+                guard let arrived = ForelHealth.arrivalDate(entry.path), arrived > arrivedAfter else { return }
+            }
+            checked += 1
+            handle(path: entry.path, depth: entry.depth, rules: rules, watchedRoot: root, nestedRoots: nested)
         }
         endProcessing(root: root)
+        return checked
     }
 
     /// Synchronous body of `recheckTimeDependentRules`, for tests.
     func performRecheck() {
-        let folders = db.withLock { db -> [(WatchedFolder, [Rule])] in
-            ((try? db.listFolders()) ?? []).filter(\.enabled).map { folder in
-                (folder, (try? db.listRules(folderId: folder.id)) ?? [])
+        let folders = db.withLock { db -> [(WatchedFolder, [Rule], Set<String>)] in
+            let all = (try? db.listFolders()) ?? []
+            return all.filter(\.enabled).map { folder in
+                (folder, (try? db.listRules(folderId: folder.id)) ?? [], RuleEngine.nestedWatchedFolders(under: folder.path, in: all))
             }
         }
-        for (folder, rules) in folders {
+        for (folder, rules, nested) in folders {
             let timeRuleIds = Set(rules.filter { $0.enabled && RuleEngine.isTimeDependent($0) }.map(\.id))
             guard !timeRuleIds.isEmpty else { continue }
             let scanned = rules.filter { timeRuleIds.contains($0.id) }
 
             beginProcessing(root: folder.path)
-            RuleEngine.forEachEntry(root: folder.path, maxDepth: RuleEngine.maxRuleDepth(scanned)) { entry in
+            RuleEngine.forEachEntry(root: folder.path, maxDepth: RuleEngine.maxRuleDepth(scanned), skipping: nested) { entry in
                 // Still arriving: the settle check will run every rule on it.
                 guard settling[entry.path] == nil, settlingAncestor(of: entry.path) == nil else { return }
                 let (matched, history) = RuleEngine.run(
@@ -629,6 +652,7 @@ public final class WatcherCoordinator: @unchecked Sendable {
                     rules: rules,
                     batchId: UUID().uuidString,
                     root: folder.path,
+                    nestedRoots: nested,
                     shouldConsider: { rule, path in
                         timeRuleIds.contains(rule.id) && !RuleMatchMemory.shared.hasMatchedUnchanged(ruleId: rule.id, path: path)
                     }
@@ -640,12 +664,12 @@ public final class WatcherCoordinator: @unchecked Sendable {
         }
     }
 
-    private func handle(path: String, depth: Int, rules: [Rule], watchedRoot: String) {
+    private func handle(path: String, depth: Int, rules: [Rule], watchedRoot: String, nestedRoots: Set<String>) {
         guard FileManager.default.fileExists(atPath: path) else { return }
         guard hasPathChangedSinceLastEvaluation(path) else { return }
 
         let batchId = UUID().uuidString
-        let (matched, history) = RuleEngine.run(path: path, depth: depth, rules: rules, batchId: batchId, root: watchedRoot)
+        let (matched, history) = RuleEngine.run(path: path, depth: depth, rules: rules, batchId: batchId, root: watchedRoot, nestedRoots: nestedRoots)
         record(matched: matched, history: history, path: path, rules: rules)
     }
 

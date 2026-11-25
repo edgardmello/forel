@@ -432,13 +432,23 @@ public enum ActionExecutor {
             throw ActionError("Upload URL must use FTP, FTPS, SFTP, HTTP, or HTTPS and include a host")
         }
 
+        let storedPassword = UploadDestination.credentialAccount(for: destination)
+            .flatMap { UploadPasswords.store.password(for: $0) }
+        let command = UploadDestination.curlCommand(sourcePath: path, destination: destination, password: storedPassword)
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-        process.arguments = UploadDestination.curlArguments(sourcePath: path, destination: destination)
+        process.arguments = command.arguments
         process.standardOutput = FileHandle.nullDevice
         let errors = Pipe()
         process.standardError = errors
+        let input = Pipe()
+        process.standardInput = command.standardInput == nil ? FileHandle.nullDevice : input
         try process.run()
+        if let config = command.standardInput {
+            input.fileHandleForWriting.write(Data(config.utf8))
+            try? input.fileHandleForWriting.close()
+        }
         let errorData = errors.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
@@ -459,7 +469,8 @@ public enum ActionExecutor {
             of: destination.absoluteString,
             with: UploadDestination.displayString(for: destination.absoluteString)
         )
-        for secret in [components.user, components.password].compactMap({ $0 }).filter({ !$0.isEmpty }) {
+        let stored = UploadDestination.credentialAccount(for: destination).flatMap { UploadPasswords.store.password(for: $0) }
+        for secret in [components.user, components.password, stored].compactMap({ $0 }).filter({ !$0.isEmpty }) {
             message = message.replacingOccurrences(of: secret, with: "••••")
             if let encoded = secret.addingPercentEncoding(withAllowedCharacters: .urlUserAllowed) {
                 message = message.replacingOccurrences(of: encoded, with: "••••")

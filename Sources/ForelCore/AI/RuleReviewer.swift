@@ -689,6 +689,11 @@ public enum RuleReviewer {
         ])
     }
 
+    /// The service's host, for saying where a review goes.
+    public static func serviceHost(_ settings: AISettings) -> String {
+        URL(string: settings.baseURL)?.host ?? settings.baseURL
+    }
+
     public static func editConversation(
         rule: Rule,
         folderPath: String?,
@@ -1016,6 +1021,16 @@ public struct RuleReviewConversation: Equatable, Sendable {
 
     public let mode: Mode
     public internal(set) var messages: [Message]
+
+    /// Rough size of what the next request sends, in tokens (about four
+    /// characters each), so the review can say what it costs before it runs.
+    public var estimatedTokens: Int {
+        RuleReviewConversation.estimatedTokens(characters: messages.reduce(0) { $0 + $1.content.count })
+    }
+
+    static func estimatedTokens(characters: Int) -> Int {
+        max(1, (characters + 3) / 4)
+    }
 }
 
 /// What the service answered to the user's reply.

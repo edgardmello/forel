@@ -33,7 +33,7 @@ forel/
 
 - Use `swift build` and `swift test` from the repository root.
 - When changing Swift code, keep edits aligned with the existing package structure and avoid unnecessary refactors.
-- Use `apply_patch` for manual file edits.
+- Make manual file edits with your editing tool (e.g. `apply_patch` in Codex); avoid rewriting whole files from memory.
 - Do not revert user changes you did not make.
 - Avoid destructive commands unless explicitly requested.
 

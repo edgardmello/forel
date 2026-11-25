@@ -107,9 +107,14 @@ public struct PreviewResult: Sendable {
     /// For the rule editor's test: how many of the matched files a rule
     /// above the tested one takes first, by that rule's name.
     public let takenEarlier: [String: Int]
+    /// Set for a "Coming Up" preview: how far ahead it looked. Its matches
+    /// are files that time-dependent rules will act on within that span
+    /// but don't yet.
+    public let lookahead: TimeInterval?
 
-    public init(filesScanned: Int, matches: [FilePreview], matchLimit: Int? = nil, reachedMatchLimit: Bool = false, nonMatches: [FilePreview] = [], reachedNonMatchLimit: Bool = false, takenEarlier: [String: Int] = [:]) {
+    public init(filesScanned: Int, matches: [FilePreview], matchLimit: Int? = nil, reachedMatchLimit: Bool = false, nonMatches: [FilePreview] = [], reachedNonMatchLimit: Bool = false, takenEarlier: [String: Int] = [:], lookahead: TimeInterval? = nil) {
         self.takenEarlier = takenEarlier
+        self.lookahead = lookahead
         self.filesScanned = filesScanned
         self.matches = matches
         self.matchLimit = matchLimit
@@ -133,7 +138,10 @@ public enum RuleEngine {
     ///   (for the file's current path) are passed over as if disabled — the
     ///   periodic re-check uses it to look only at time-dependent rules that
     ///   haven't already handled the file.
-    public static func run(path: String, depth: Int, rules: [Rule], batchId: String, root: String? = nil, shouldConsider: ((Rule, String) -> Bool)? = nil) -> (matched: [String], history: [HistoryEntry]) {
+    /// - Parameter nestedRoots: watched folders inside `root`. A move into
+    ///   one of them ends the pass like a move out of `root` does: that
+    ///   folder's own rules take the file from there.
+    public static func run(path: String, depth: Int, rules: [Rule], batchId: String, root: String? = nil, nestedRoots: Set<String> = [], shouldConsider: ((Rule, String) -> Bool)? = nil) -> (matched: [String], history: [HistoryEntry]) {
         guard !SystemFileFilter.isExcluded((path as NSString).lastPathComponent), !FileReadiness.isMarkedBusy(path) else {
             return ([], [])
         }
@@ -225,7 +233,7 @@ public enum RuleEngine {
                 // the pass: the rules below were written for files that are
                 // still here, and the folder it landed in (if watched) runs
                 // its own rules on it.
-                if movedOutOfWatchedFolder(result.finalPath, root: root, startPath: target.path, startDepth: target.depth) { break }
+                if movedOutOfWatchedFolder(result.finalPath, root: root, startPath: target.path, startDepth: target.depth, nestedRoots: nestedRoots) { break }
 
                 // A non-terminal action (e.g. rename) can still change the
                 // file's path; follow it so the next rule in the chain sees
@@ -247,7 +255,7 @@ public enum RuleEngine {
     ///   conditions (`matched: false`, no planned actions). Rules skipped for
     ///   scope or being disabled stay invisible, and system/busy files still
     ///   return nil — only condition failures are diagnosable.
-    public static func previewFile(path: String, depth: Int, rules: [Rule], root: String? = nil, includeNonMatches: Bool = false) -> FilePreview? {
+    public static func previewFile(path: String, depth: Int, rules: [Rule], root: String? = nil, includeNonMatches: Bool = false, nestedRoots: Set<String> = []) -> FilePreview? {
         guard !SystemFileFilter.isExcluded((path as NSString).lastPathComponent), !FileReadiness.isMarkedBusy(path) else {
             return nil
         }
@@ -344,7 +352,7 @@ public enum RuleEngine {
 
                 if result.isTerminal { break }
 
-                if movedOutOfWatchedFolder(result.finalPath, root: root, startPath: target.path, startDepth: target.depth) { break }
+                if movedOutOfWatchedFolder(result.finalPath, root: root, startPath: target.path, startDepth: target.depth, nestedRoots: nestedRoots) { break }
 
                 if result.finalPath != currentPath {
                     currentPath = result.finalPath
@@ -487,9 +495,15 @@ public enum RuleEngine {
     /// started in. Without an explicit `root`, the folder is inferred from
     /// where the pass started: `startDepth` levels above the start path's
     /// parent folder.
-    static func movedOutOfWatchedFolder(_ finalPath: String, root: String?, startPath: String, startDepth: Int) -> Bool {
+    static func movedOutOfWatchedFolder(_ finalPath: String, root: String?, startPath: String, startDepth: Int, nestedRoots: Set<String> = []) -> Bool {
         let scopeRoot = root ?? inferredRoot(path: startPath, depth: startDepth)
-        return pathDepth(root: scopeRoot, path: finalPath) == nil
+        guard pathDepth(root: scopeRoot, path: finalPath) != nil else { return true }
+        // Moved into a watched folder nested in this one (Downloads →
+        // Downloads/_Hoje): that folder's rules own it now, unless the pass
+        // already started inside it.
+        return nestedRoots.contains { nested in
+            pathDepth(root: nested, path: finalPath) != nil && pathDepth(root: nested, path: startPath) == nil
+        }
     }
 
     static func inferredRoot(path: String, depth: Int) -> String {
@@ -510,27 +524,50 @@ public enum RuleEngine {
         return max(0, pathComponents.count - rootComponents.count - 1)
     }
 
-    public static func walkEntries(root: String, maxDepth: Int?) -> [ScopedPath] {
+    public static func walkEntries(root: String, maxDepth: Int?, skipping: Set<String> = []) -> [ScopedPath] {
         var entries: [ScopedPath] = []
-        forEachEntry(root: root, maxDepth: maxDepth) { entry in
+        forEachEntry(root: root, maxDepth: maxDepth, skipping: skipping) { entry in
             entries.append(entry)
         }
         return entries
     }
 
-    public static func forEachEntry(root: String, maxDepth: Int?, _ visit: (ScopedPath) -> Void) {
+    /// Visits what's inside `root`, down to `maxDepth`. Folders in
+    /// `skipping` (other watched folders nested in this one; see
+    /// `nestedWatchedFolders(under:in:)`) are left out with everything in
+    /// them: their own rules handle those files, as the watcher does for
+    /// files arriving there.
+    public static func forEachEntry(root: String, maxDepth: Int?, skipping: Set<String> = [], _ visit: (ScopedPath) -> Void) {
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: root, isDirectory: &isDir), isDir.boolValue else {
             return
         }
-        walkEntriesInner(root: root, maxDepth: maxDepth, depth: 0, visit: visit)
+        let skipped = Set(skipping.map { ($0 as NSString).standardizingPath })
+        walkEntriesInner(root: root, maxDepth: maxDepth, depth: 0, skipping: skipped, visit: visit)
     }
 
-    private static func walkEntriesInner(root: String, maxDepth: Int?, depth: Int, visit: (ScopedPath) -> Void) {
+    /// The enabled watched folders inside `root` (not `root` itself). A file
+    /// in one of them belongs to that folder's rules, never to `root`'s:
+    /// the watcher already hands each event to the innermost watched folder.
+    public static func nestedWatchedFolders(under root: String, in folders: [WatchedFolder]) -> Set<String> {
+        let rootPath = (root as NSString).standardizingPath
+        let rootComponents = (rootPath as NSString).pathComponents
+        return Set(folders.compactMap { folder -> String? in
+            guard folder.enabled else { return nil }
+            let path = (folder.path as NSString).standardizingPath
+            let components = (path as NSString).pathComponents
+            guard components.count > rootComponents.count,
+                  Array(components.prefix(rootComponents.count)) == rootComponents else { return nil }
+            return path
+        })
+    }
+
+    private static func walkEntriesInner(root: String, maxDepth: Int?, depth: Int, skipping: Set<String>, visit: (ScopedPath) -> Void) {
         guard let children = try? FileManager.default.contentsOfDirectory(atPath: root) else { return }
         for child in children.sorted() {
             if SystemFileFilter.isExcluded(child) { continue }
             let childPath = (root as NSString).appendingPathComponent(child)
+            if !skipping.isEmpty, skipping.contains((childPath as NSString).standardizingPath) { continue }
             visit(ScopedPath(path: childPath, depth: depth))
 
             var isDir: ObjCBool = false
@@ -542,7 +579,7 @@ public enum RuleEngine {
                 continue
             }
             if let limit = maxDepth, depth >= limit { continue }
-            walkEntriesInner(root: childPath, maxDepth: maxDepth, depth: depth + 1, visit: visit)
+            walkEntriesInner(root: childPath, maxDepth: maxDepth, depth: depth + 1, skipping: skipping, visit: visit)
         }
     }
 

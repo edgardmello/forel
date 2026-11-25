@@ -24,7 +24,7 @@ import ForelCore
 /// app bundle (with a backup it restores on failure), and relaunches.
 /// Forel ships ad-hoc signed (no Apple Developer ID, no notarization, no
 /// EdDSA update signature like Sparkle uses), so the only trust boundary
-/// here is HTTPS to the hardcoded official repo's GitHub Releases API —
+/// here is HTTPS to this project's own GitHub Releases API (`AppIdentity.repository`) —
 /// there is no cryptographic proof the downloaded binary came from this
 /// project's maintainer.
 @MainActor
@@ -55,7 +55,7 @@ final class UpdaterManager: ObservableObject {
         }
     }
 
-    private static let repo = "lab421/forel"
+    private static let repo = AppIdentity.repository
     private static let checkInterval: TimeInterval = 12 * 60 * 60
     private static let settingKey = "auto_update_checks"
 
@@ -213,63 +213,11 @@ final class UpdaterManager: ObservableObject {
     }
 
     static func isNewer(_ candidate: String, than current: String) -> Bool {
-        compareVersions(candidate, current) == .orderedDescending
+        ReleaseVersion.isNewer(candidate, than: current)
     }
 
-    /// Semver-ish comparison: numeric `major.minor.patch` core, then a
-    /// stable release outranks any prerelease, and prereleases compare
-    /// their dot-separated identifiers left to right (numeric identifiers
-    /// numerically, others lexically — which conveniently also gives the
-    /// right "alpha" < "beta" < "rc" ordering). This matters because the
-    /// naive "split on every dot and compare as numbers" approach used
-    /// before this would parse "alpha.8" and "beta.1" as the *same* leading
-    /// components and then compare 8 vs 1, concluding alpha.8 > beta.1.
     static func compareVersions(_ lhs: String, _ rhs: String) -> ComparisonResult {
-        let (lhsCore, lhsPre) = splitVersion(lhs)
-        let (rhsCore, rhsPre) = splitVersion(rhs)
-        let coreResult = compareCore(lhsCore, rhsCore)
-        guard coreResult == .orderedSame else { return coreResult }
-        switch (lhsPre, rhsPre) {
-        case (nil, nil): return .orderedSame
-        case (nil, _): return .orderedDescending
-        case (_, nil): return .orderedAscending
-        case let (lhsId?, rhsId?): return comparePrerelease(lhsId, rhsId)
-        }
-    }
-
-    private static func splitVersion(_ version: String) -> (core: [Int], prerelease: String?) {
-        let parts = version.split(separator: "-", maxSplits: 1)
-        let core = parts[0].split(separator: ".").map { Int($0) ?? 0 }
-        let prerelease = parts.count > 1 ? String(parts[1]) : nil
-        return (core, prerelease)
-    }
-
-    private static func compareCore(_ lhs: [Int], _ rhs: [Int]) -> ComparisonResult {
-        let count = max(lhs.count, rhs.count)
-        for index in 0..<count {
-            let lhsPart = index < lhs.count ? lhs[index] : 0
-            let rhsPart = index < rhs.count ? rhs[index] : 0
-            if lhsPart != rhsPart { return lhsPart < rhsPart ? .orderedAscending : .orderedDescending }
-        }
-        return .orderedSame
-    }
-
-    private static func comparePrerelease(_ lhs: String, _ rhs: String) -> ComparisonResult {
-        let lhsIds = lhs.split(separator: ".").map(String.init)
-        let rhsIds = rhs.split(separator: ".").map(String.init)
-        let count = max(lhsIds.count, rhsIds.count)
-        for index in 0..<count {
-            guard index < lhsIds.count else { return .orderedAscending }
-            guard index < rhsIds.count else { return .orderedDescending }
-            let lhsId = lhsIds[index]
-            let rhsId = rhsIds[index]
-            if let lhsNumber = Int(lhsId), let rhsNumber = Int(rhsId) {
-                if lhsNumber != rhsNumber { return lhsNumber < rhsNumber ? .orderedAscending : .orderedDescending }
-            } else if lhsId != rhsId {
-                return lhsId < rhsId ? .orderedAscending : .orderedDescending
-            }
-        }
-        return .orderedSame
+        ReleaseVersion.compare(lhs, rhs)
     }
 
     private static func download(_ assetURL: URL) async throws -> URL {

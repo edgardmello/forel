@@ -34,6 +34,7 @@ final class StatusBarController: NSObject {
     private var pausedSubscription: AnyCancellable?
     private var updateSubscription: AnyCancellable?
     private var visibilitySubscription: AnyCancellable?
+    private var healthSubscription: AnyCancellable?
 
     init(model: AppModel, updater: UpdaterManager, onOpenMainWindow: @escaping () -> Void) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -45,7 +46,7 @@ final class StatusBarController: NSObject {
         statusItem.isVisible = model.showMenuBarIcon
 
         if let button = statusItem.button {
-            button.image = Self.glyph(paused: model.paused, updateAvailable: updater.updateAvailable)
+            button.image = Self.glyph(paused: model.paused, needsAttention: model.health.needsAttention, updateAvailable: updater.updateAvailable)
             button.image?.isTemplate = false
             button.target = self
             button.action = #selector(togglePopover)
@@ -58,6 +59,11 @@ final class StatusBarController: NSObject {
             guard let self else { return }
             self.refreshGlyph(paused: self.model.paused)
         }
+        healthSubscription = model.health.$issues.sink { [weak self] _ in
+            guard let self else { return }
+            // `$issues` fires before the new value is stored.
+            DispatchQueue.main.async { self.refreshGlyph(paused: self.model.paused) }
+        }
         visibilitySubscription = model.$showMenuBarIcon
             .removeDuplicates()
             .sink { [weak self] isVisible in
@@ -66,7 +72,10 @@ final class StatusBarController: NSObject {
     }
 
     private func refreshGlyph(paused: Bool) {
-        statusItem.button?.image = Self.glyph(paused: paused, updateAvailable: updater.updateAvailable)
+        statusItem.button?.image = Self.glyph(paused: paused, needsAttention: model.health.needsAttention, updateAvailable: updater.updateAvailable)
+        statusItem.button?.toolTip = paused
+            ? "Forel — watching is paused"
+            : (model.health.needsAttention ? "Forel — needs attention" : "Forel — watching")
     }
 
     private func setVisible(_ isVisible: Bool) {
@@ -146,11 +155,12 @@ final class StatusBarController: NSObject {
     }
 
     /// Menu bar glyph: a crisp vector `leaf.fill` SF Symbol, with a colour dot
-    /// composited in the bottom-right corner (watching/paused) and, when an
+    /// composited in the bottom-right corner (green watching, yellow needs
+    /// attention, red paused) and, when an
     /// update is available, a larger orange badge with a white ring overlapping
     /// the top-right corner so it reads at a glance. Always white (not
     /// template-tinted), per the app's dark menu-bar styling.
-    private static func glyph(paused: Bool, updateAvailable: Bool, size: CGFloat = 18) -> NSImage {
+    private static func glyph(paused: Bool, needsAttention: Bool, updateAvailable: Bool, size: CGFloat = 18) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size))
         image.lockFocus()
         if let leaf = leafGlyph(size: size) {
@@ -162,7 +172,7 @@ final class StatusBarController: NSObject {
         image.unlockFocus()
 
         let dotSize: CGFloat = size / 3
-        let dotImage = dot(paused: paused, size: dotSize)
+        let dotImage = dot(color: paused ? .systemRed : (needsAttention ? .systemYellow : .systemGreen), size: dotSize)
         image.lockFocus()
         dotImage.draw(at: NSPoint(x: size - dotSize - 1, y: 0), from: .zero, operation: .sourceOver, fraction: 1)
         if updateAvailable {
@@ -203,10 +213,6 @@ final class StatusBarController: NSObject {
         NSRect(x: 0, y: 0, width: size, height: size).fill(using: .sourceAtop)
         image.unlockFocus()
         return image
-    }
-
-    private static func dot(paused: Bool, size: CGFloat) -> NSImage {
-        dot(color: paused ? .systemRed : .systemGreen, size: size)
     }
 
     private static func dot(color: NSColor, size: CGFloat) -> NSImage {
