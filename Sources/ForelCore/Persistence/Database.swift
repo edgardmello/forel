@@ -282,6 +282,16 @@ public final class Database: @unchecked Sendable {
         return Int(stmt.columnInt64(0))
     }
 
+    /// How many actions failed at or after `since` (an ISO-8601 UTC
+    /// timestamp, the format history uses).
+    public func countFailedHistory(since: String) throws -> Int {
+        let stmt = try statement("SELECT COUNT(*) FROM action_history WHERE status=?1 AND created_at >= ?2")
+        stmt.bind(1, HistoryStatus.failed.rawValue)
+        stmt.bind(2, since)
+        _ = try stmt.step()
+        return Int(stmt.columnInt64(0))
+    }
+
     public func getHistoryEntry(_ id: String) throws -> HistoryEntry? {
         let stmt = try statement("SELECT \(Self.historyColumns) FROM action_history WHERE id=?1")
         stmt.bind(1, id)
@@ -625,6 +635,23 @@ public final class Database: @unchecked Sendable {
 
     public func linkedFolderIds(for ruleId: String) throws -> Set<String> {
         Set(try linkedRuleFolders(ruleId).values)
+    }
+
+    /// For each rule of `folderId` that shares its basics and conditions
+    /// with other folders: how many other folders.
+    public func linkedFolderCounts(folderId: String) throws -> [String: Int] {
+        let stmt = try statement(
+            """
+            SELECT r.id, COUNT(o.id) FROM rules r
+            JOIN rules o ON o.shared_rule_id = r.shared_rule_id AND o.id <> r.id
+            WHERE r.folder_id=?1 AND r.shared_rule_id IS NOT NULL
+            GROUP BY r.id
+            """
+        )
+        stmt.bind(1, folderId)
+        var counts: [String: Int] = [:]
+        while try stmt.step() { counts[stmt.columnText(0)] = Int(stmt.columnInt64(1)) }
+        return counts
     }
 
     private func linkedRuleFolders(_ ruleId: String) throws -> [String: String] {

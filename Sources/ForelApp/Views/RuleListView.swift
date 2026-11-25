@@ -108,6 +108,11 @@ struct RuleListView: View {
                 .sheet(item: $model.previewResult) { result in
                     PreviewSheet(result: result) { model.previewResult = nil }
                 }
+                .onChange(of: model.requestedOrganizingSheet) { requested in
+                    guard let requested else { return }
+                    model.requestedOrganizingSheet = nil
+                    if organizingSheet == nil { organizingSheet = requested } else { switchSheet(to: requested) }
+                }
                 .sheet(item: $organizingSheet) { sheet in
                     switch sheet {
                     case .check:
@@ -580,6 +585,9 @@ struct RuleListView: View {
                 Button("Check Rules…") { organizingSheet = .check }
                 Button("Suggest Order…") { organizingSheet = .order }
                     .disabled(model.rules.count < 2)
+                Button("Coming Up in the Next 24 Hours…") { model.previewUpcoming() }
+                    .disabled(!model.selectedFolderHasTimedRules || model.isPreviewing)
+                    .help("Shows what rules that wait (such as \"Date Added is older than 1 day\") will do here within a day, without changing anything")
                 Divider()
                 Button("Set Up Daily Inbox…") { organizingSheet = .dailyInbox }
             } label: {
@@ -785,6 +793,10 @@ private struct RuleCard: View {
                         HStack(spacing: 6) {
                             metaPill(icon: "line.3.horizontal.decrease.circle", text: "\(rule.conditions.count)")
                             metaPill(icon: "bolt.fill", text: "\(rule.actions.count)")
+                            if let linked = model.linkedFolderCounts[rule.id] {
+                                metaPill(icon: "link", text: "also in \(linked) folder\(linked == 1 ? "" : "s")")
+                                    .help("This rule's basics and conditions are shared with \(linked) other watched folder\(linked == 1 ? "" : "s"); editing them changes every copy. Each folder keeps its own actions.")
+                            }
                             if let stats = model.runStats(for: rule) {
                                 let totalRuns = stats.successCount + stats.failedCount
                                 if totalRuns > 0 {
@@ -1106,16 +1118,23 @@ private struct PreviewSheet: View {
     let onClose: () -> Void
 
     private var subtitle: String {
-        let matchText = result.reachedMatchLimit
-            ? "\(result.matches.count)+ matched"
-            : "\(result.matches.count) matched"
-        return "\(result.filesScanned) items scanned · \(matchText)"
+        let count = result.reachedMatchLimit ? "\(result.matches.count)+" : "\(result.matches.count)"
+        if result.lookahead != nil {
+            return "\(result.filesScanned) items scanned · \(count) waiting"
+        }
+        return "\(result.filesScanned) items scanned · \(count) matched"
+    }
+
+    private var title: String {
+        guard let lookahead = result.lookahead else { return "Preview (Dry Run)" }
+        let hours = Int(lookahead / 3600)
+        return hours == 24 ? "Coming Up in the Next 24 Hours" : "Coming Up in the Next \(hours) Hours"
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             ViewHeader(
-                title: "Preview (Dry Run)",
+                title: title,
                 subtitle: subtitle
             )
 
@@ -1140,7 +1159,7 @@ private struct PreviewSheet: View {
                     }
 
                     if result.matches.isEmpty {
-                        Text("No files match the current rules.")
+                        Text(result.lookahead == nil ? "No files match the current rules." : "No rule that waits will act on a file here in that time.")
                             .font(.system(size: 12))
                             .foregroundStyle(ForelTheme.secondaryText)
                             .frame(maxWidth: .infinity)

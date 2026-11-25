@@ -107,9 +107,14 @@ public struct PreviewResult: Sendable {
     /// For the rule editor's test: how many of the matched files a rule
     /// above the tested one takes first, by that rule's name.
     public let takenEarlier: [String: Int]
+    /// Set for a "Coming Up" preview: how far ahead it looked. Its matches
+    /// are files that time-dependent rules will act on within that span
+    /// but don't yet.
+    public let lookahead: TimeInterval?
 
-    public init(filesScanned: Int, matches: [FilePreview], matchLimit: Int? = nil, reachedMatchLimit: Bool = false, nonMatches: [FilePreview] = [], reachedNonMatchLimit: Bool = false, takenEarlier: [String: Int] = [:]) {
+    public init(filesScanned: Int, matches: [FilePreview], matchLimit: Int? = nil, reachedMatchLimit: Bool = false, nonMatches: [FilePreview] = [], reachedNonMatchLimit: Bool = false, takenEarlier: [String: Int] = [:], lookahead: TimeInterval? = nil) {
         self.takenEarlier = takenEarlier
+        self.lookahead = lookahead
         self.filesScanned = filesScanned
         self.matches = matches
         self.matchLimit = matchLimit

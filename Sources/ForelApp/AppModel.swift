@@ -45,6 +45,9 @@ final class AppModel: ObservableObject {
     @Published var folders: [WatchedFolder] = []
     @Published var selectedFolderId: String?
     @Published var rules: [Rule] = []
+    /// How many other folders share each selected-folder rule's basics and
+    /// conditions (rules not shared are absent).
+    @Published private(set) var linkedFolderCounts: [String: Int] = [:]
     @Published private(set) var ruleRunStats: [RuleRunStats] = []
     @Published var history: [HistoryEntry] = []
     @Published var historyTotalCount: Int = 0
@@ -54,6 +57,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var hasMoreHistory = false
     @Published private(set) var isLoadingHistory = false
     @Published var paused: Bool = false
+    /// An Organize sheet asked for from the app's Rules menu; the rule list
+    /// opens it and clears this.
+    @Published var requestedOrganizingSheet: RuleOrganizingSheet?
+    /// What keeps Forel from working, for the menu bar and quick panel.
+    private(set) var health: HealthMonitor!
     @Published var alertTitle: String = "Error"
     @Published var errorMessage: String?
     @Published var detailRoute: DetailRoute = .rules
@@ -199,6 +207,17 @@ final class AppModel: ObservableObject {
         let hazelPromptSeen = db.withLock { db in (try? db.getSetting("hazel_import_prompt_seen")) == "1" }
         showHazelImportAssistant = !hazelPromptSeen && folders.isEmpty && hazelAppURL != nil
         startWatchingEnabledFolders()
+        health = HealthMonitor(
+            db: db,
+            coordinator: coordinator,
+            folders: { [weak self] in self?.folders ?? [] },
+            isPaused: { [weak self] in self?.paused ?? true },
+            notify: { [weak self] title, body in
+                guard let self, self.watcherNotificationsEnabled else { return }
+                Task { await self.postNotification(title: title, body: body) }
+            }
+        )
+        health.start()
         startHistoryCleanupTimer()
         startRecheckTimer()
         observeVolumeMounts()
@@ -336,6 +355,7 @@ final class AppModel: ObservableObject {
             try? await Task.sleep(for: .milliseconds(500))
             self?.watcherHistoryRevisionTask = nil
             self?.watcherHistoryRevision += 1
+            self?.health?.refresh()
         }
     }
 
@@ -582,11 +602,13 @@ final class AppModel: ObservableObject {
             reloadHistory()
         }
         reloadRules()
+        health?.refresh()
     }
 
     func reloadRules() {
-        guard let folderId = selectedFolderId else { rules = []; return }
+        guard let folderId = selectedFolderId else { rules = []; linkedFolderCounts = [:]; return }
         rules = db.withLock { db in (try? db.listRules(folderId: folderId)) ?? [] }
+        linkedFolderCounts = db.withLock { db in (try? db.linkedFolderCounts(folderId: folderId)) ?? [:] }
         reloadRuleRunStats()
         refreshRuleDiagnostics()
         scheduleBoundaryRecheck()
@@ -804,11 +826,29 @@ final class AppModel: ObservableObject {
     }
 
     func saveRule(_ rule: Rule, sharingWith folderIds: Set<String>, unlink: Bool) throws {
+        let before = Set(ruleDiagnostics.map(\.id))
         try db.withLock { db in
             try db.saveRule(rule, sharingWith: folderIds, unlink: unlink)
         }
         if !paused { coordinator.refreshWatchedPaths() }
         reloadRules()
+        warnAboutNewProblems(with: rule, besides: before)
+    }
+
+    /// Check Rules without opening it: right after a save, says what the
+    /// saved rule now gets in the way of (or what gets in its way), if that
+    /// is new. Only problems found without reading files.
+    private func warnAboutNewProblems(with rule: Rule, besides known: Set<String>) {
+        let new = ruleDiagnostics.filter { diagnostic in
+            diagnostic.severity == .warning
+                && diagnostic.ruleIds.contains(rule.id)
+                && !known.contains(diagnostic.id)
+        }
+        guard !new.isEmpty else { return }
+        showNotice(
+            title: new.count == 1 ? new[0].title : "\(new.count) issues with \"\(rule.name)\"",
+            message: new.map(\.message).joined(separator: "\n\n") + "\n\nThe rule was saved. Organize → Check Rules lists every issue in this folder."
+        )
     }
 
     func deleteRule(_ rule: Rule) {
@@ -1327,6 +1367,36 @@ final class AppModel: ObservableObject {
         }
         reloadHistory()
         detailRoute = .history
+    }
+
+    /// "Coming Up": what rules that wait on time (a daily inbox's "Date
+    /// Added is older than 1 day", a time-of-day window) will do in the
+    /// selected folder within `hours`. Shown in the Dry Run sheet; changes
+    /// nothing.
+    func previewUpcoming(hours: Int = 24) {
+        guard !isPreviewing, let folder = folders.first(where: { $0.id == selectedFolderId }) else { return }
+        let folderRules = rules
+        let nested = nestedWatchedFolders(under: folder)
+        let matchLimit = previewMatchLimit
+        isPreviewing = true
+        Task {
+            defer { isPreviewing = false }
+            previewResult = await Task.detached(priority: .userInitiated) {
+                RuleEngine.upcoming(
+                    root: folder.path,
+                    rules: folderRules,
+                    lookahead: TimeInterval(hours * 60 * 60),
+                    nestedRoots: nested,
+                    matchLimit: matchLimit
+                )
+            }.value
+        }
+    }
+
+    /// Whether the selected folder has rules that wait on time, so "Coming
+    /// Up" has something to show.
+    var selectedFolderHasTimedRules: Bool {
+        rules.contains { $0.enabled && RuleEngine.isTimeDependent($0) }
     }
 
     /// Runs Dry Run off the main thread — scanning every file in a large

@@ -107,9 +107,17 @@ struct RuleTableView: View {
 
             TableColumn("Name") { rule in
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(rule.name)
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(rule.name)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                        if let linked = model.linkedFolderCounts[rule.id] {
+                            Image(systemName: "link")
+                                .font(.system(size: 10))
+                                .foregroundStyle(ForelTheme.secondaryText)
+                                .help("Shared with \(linked) other folder\(linked == 1 ? "" : "s")")
+                        }
+                    }
                     if let hint = matchHints[rule.id] {
                         Text(hint)
                             .font(.system(size: 10))

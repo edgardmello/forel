@@ -199,6 +199,13 @@ struct RuleReviewSheet: View {
                 .foregroundStyle(ForelTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if let estimate = requestSizeEstimate {
+                Label(estimate, systemImage: "arrow.up.forward.circle")
+                    .font(.system(size: 10))
+                    .foregroundStyle(ForelTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Divider().overlay(ForelTheme.divider)
 
             HStack {
@@ -293,6 +300,17 @@ struct RuleReviewSheet: View {
         .font(.system(size: 11))
         .foregroundStyle(ForelTheme.secondaryText)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Where the next request goes and about how big it is, so it's clear
+    /// what leaves the Mac and what the service bills before pressing.
+    private var requestSizeEstimate: String? {
+        let host = RuleReviewer.serviceHost(settings)
+        let conversation = (showingEdit ? editConversation : reviewConversation)
+            ?? (try? RuleReviewer.reviewConversation(rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal))
+        guard let conversation else { return nil }
+        let tokens = conversation.estimatedTokens
+        return "Goes to \(host) (\(settings.model)): about \(tokens.formatted()) tokens per request, billed by your AI service."
     }
 
     private func analyze() {

@@ -77,6 +77,9 @@ struct ForelMacApp: App {
                 }
                 .keyboardShortcut("k", modifiers: .command)
             }
+            CommandMenu("Rules") {
+                RulesMenuCommands(model: model)
+            }
             CommandGroup(replacing: .appInfo) {
                 Button("About Forel") {
                     var options: [NSApplication.AboutPanelOptionKey: Any] = [
@@ -122,5 +125,39 @@ struct ForelMacApp: App {
             range: NSRange(location: 0, length: credits.length)
         )
         return credits
+    }
+}
+
+/// The app's Rules menu: the folder actions from the rule list's toolbar,
+/// with keyboard shortcuts, plus pausing.
+private struct RulesMenuCommands: View {
+    @ObservedObject var model: AppModel
+
+    private var hasFolder: Bool { model.selectedFolderId != nil }
+
+    var body: some View {
+        Button("Run Now") { model.runNow() }
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(!hasFolder || model.isRunningNow)
+        Button("Dry Run") { model.preview() }
+            .keyboardShortcut("r", modifiers: [.command, .shift])
+            .disabled(!hasFolder || model.isPreviewing)
+        Button("Coming Up in the Next 24 Hours") { model.previewUpcoming() }
+            .disabled(!hasFolder || model.isPreviewing || !model.selectedFolderHasTimedRules)
+        Divider()
+        Button("Check Rules…") { showOrganizing(.check) }
+            .disabled(!hasFolder)
+        Button("Suggest Order…") { showOrganizing(.order) }
+            .disabled(!hasFolder || model.rules.count < 2)
+        Button("Set Up Daily Inbox…") { showOrganizing(.dailyInbox) }
+            .disabled(!hasFolder)
+        Divider()
+        Button(model.paused ? "Resume Watching" : "Pause Watching") { model.togglePaused() }
+            .keyboardShortcut("p", modifiers: [.command, .option])
+    }
+
+    private func showOrganizing(_ sheet: RuleOrganizingSheet) {
+        model.detailRoute = .rules
+        model.requestedOrganizingSheet = sheet
     }
 }

@@ -52,6 +52,11 @@ struct QuickPanelView: View {
                     )
                 }
 
+                HealthIssuesCard(health: model.health, onOpenMainWindow: onOpenMainWindow, onShowActivity: {
+                    model.detailRoute = .history
+                    onOpenMainWindow()
+                })
+
                 GlassCard {
                     ToggleRow(
                         title: "Watching",
@@ -160,5 +165,68 @@ private struct QuickCount: View {
                 .foregroundStyle(ForelTheme.secondaryText)
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+/// What keeps Forel from working, with a way to fix each. Hidden when
+/// everything is fine.
+private struct HealthIssuesCard: View {
+    @ObservedObject var health: HealthMonitor
+    let onOpenMainWindow: () -> Void
+    let onShowActivity: () -> Void
+
+    var body: some View {
+        if !health.issues.isEmpty {
+            GlassCard {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(health.issues) { issue in
+                        row(issue)
+                        if issue.id != health.issues.last?.id {
+                            Divider().overlay(ForelTheme.divider).padding(.leading, 36)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func row(_ issue: HealthIssue) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: issue.needsAttention ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath")
+                .foregroundStyle(issue.needsAttention ? Color.yellow : ForelTheme.secondaryText)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(issue.message())
+                    .font(.system(size: 12))
+                    .foregroundStyle(ForelTheme.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                action(for: issue)
+                    .controlSize(.small)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+    }
+
+    @ViewBuilder
+    private func action(for issue: HealthIssue) -> some View {
+        switch issue.kind {
+        case .missingFolder:
+            Button("Open Forel", action: onOpenMainWindow)
+        case .noFullDiskAccess:
+            Button("Open Full Disk Access Settings…") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        case .recentFailures:
+            Button("Show in Activity", action: onShowActivity)
+        case .wasNotRunning:
+            HStack(spacing: 8) {
+                Button("Show in Activity", action: onShowActivity)
+                Button("Dismiss") { health.dismissDowntime() }
+            }
+        }
     }
 }

@@ -587,24 +587,46 @@ public final class WatcherCoordinator: @unchecked Sendable {
     /// connected. Files already handled and unchanged since are skipped.
     public func catchUp(watchedFolders paths: [String]) {
         processingQueue.async { [weak self] in
-            for path in paths { self?.performCatchUp(root: path) }
+            for path in paths { _ = self?.performCatchUp(root: path) }
         }
     }
 
-    /// Synchronous body of `catchUp(watchedFolders:)`, for tests.
-    func performCatchUp(root: String) {
+    /// Forel wasn't running since `since` (quit, crashed, or the Mac was
+    /// off): runs every folder's rules on the files that arrived in it after
+    /// that, as the watcher would have. Files that were already there are
+    /// left alone. Reports how many files were checked.
+    public func catchUpAfterDowntime(watchedFolders paths: [String], since: Date, completion: @escaping @Sendable (Int) -> Void) {
+        processingQueue.async { [weak self] in
+            guard let self else { return }
+            var checked = 0
+            for path in paths { checked += self.performCatchUp(root: path, arrivedAfter: since) }
+            completion(checked)
+        }
+    }
+
+    /// Synchronous body of `catchUp(watchedFolders:)`, for tests. With
+    /// `arrivedAfter`, only files added to the folder after that date are
+    /// run. Returns how many files were run.
+    @discardableResult
+    func performCatchUp(root: String, arrivedAfter: Date? = nil) -> Int {
         let (rules, nested) = db.withLock { db -> ([Rule], Set<String>) in
             guard let folder = ((try? db.listFolders()) ?? []).first(where: { $0.enabled && $0.path == root }) else { return ([], []) }
             return ((try? db.listRules(folderId: folder.id)) ?? [], db.nestedWatchedFolderPaths(under: root))
         }
         let enabled = rules.filter(\.enabled)
-        guard !enabled.isEmpty, FileManager.default.fileExists(atPath: root) else { return }
+        guard !enabled.isEmpty, FileManager.default.fileExists(atPath: root) else { return 0 }
         beginProcessing(root: root)
+        var checked = 0
         RuleEngine.forEachEntry(root: root, maxDepth: RuleEngine.maxRuleDepth(enabled), skipping: nested) { entry in
             guard settling[entry.path] == nil, settlingAncestor(of: entry.path) == nil else { return }
+            if let arrivedAfter {
+                guard let arrived = ForelHealth.arrivalDate(entry.path), arrived > arrivedAfter else { return }
+            }
+            checked += 1
             handle(path: entry.path, depth: entry.depth, rules: rules, watchedRoot: root, nestedRoots: nested)
         }
         endProcessing(root: root)
+        return checked
     }
 
     /// Synchronous body of `recheckTimeDependentRules`, for tests.
