@@ -412,8 +412,13 @@ public enum RuleDiagnostics {
             let result = competition(path: entry.path, depth: entry.depth, rules: enabled)
             guard let winner = result.winnerRuleId,
                   let winnerIndex = result.matchingRuleIds.firstIndex(of: winner) else { return }
+            guard let winnerRule = enabled.first(where: { $0.id == winner }) else { return }
+            let winnerSpecificity = specificity(winnerRule)
             for loser in result.matchingRuleIds[(winnerIndex + 1)...] {
-                guard let rule = enabled.first(where: { $0.id == loser }), takesFileAway(rule) else { continue }
+                // A broader rule further down is meant to get only what's
+                // left over, so losing these files to a narrower rule is fine.
+                guard let rule = enabled.first(where: { $0.id == loser }), takesFileAway(rule),
+                      specificity(rule) <= winnerSpecificity else { continue }
                 let key = "\(winner)>\(loser)"
                 if counts[key] == nil { order.append(key) }
                 counts[key, default: 0] += 1

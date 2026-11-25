@@ -104,8 +104,12 @@ public struct PreviewResult: Sendable {
     /// test (`includeNonMatches`), never by the folder-wide Dry Run.
     public let nonMatches: [FilePreview]
     public let reachedNonMatchLimit: Bool
+    /// For the rule editor's test: how many of the matched files a rule
+    /// above the tested one takes first, by that rule's name.
+    public let takenEarlier: [String: Int]
 
-    public init(filesScanned: Int, matches: [FilePreview], matchLimit: Int? = nil, reachedMatchLimit: Bool = false, nonMatches: [FilePreview] = [], reachedNonMatchLimit: Bool = false) {
+    public init(filesScanned: Int, matches: [FilePreview], matchLimit: Int? = nil, reachedMatchLimit: Bool = false, nonMatches: [FilePreview] = [], reachedNonMatchLimit: Bool = false, takenEarlier: [String: Int] = [:]) {
+        self.takenEarlier = takenEarlier
         self.filesScanned = filesScanned
         self.matches = matches
         self.matchLimit = matchLimit

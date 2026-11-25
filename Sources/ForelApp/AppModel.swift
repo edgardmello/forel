@@ -598,6 +598,7 @@ final class AppModel: ObservableObject {
         guard let folderId = selectedFolderId else { rules = []; return }
         rules = db.withLock { db in (try? db.listRules(folderId: folderId)) ?? [] }
         reloadRuleRunStats()
+        refreshRuleDiagnostics()
         scheduleBoundaryRecheck()
     }
 
@@ -949,6 +950,117 @@ final class AppModel: ObservableObject {
         reloadRules()
     }
 
+    // MARK: - Checking and ordering rules
+
+    /// Problems found in how rules work together, for every folder, without
+    /// reading any file. Refreshed whenever folders or rules reload.
+    @Published private(set) var ruleDiagnostics: [RuleDiagnostic] = []
+
+    var selectedFolderDiagnostics: [RuleDiagnostic] {
+        guard let selectedFolderId else { return [] }
+        return ruleDiagnostics.filter { diagnostic in
+            diagnostic.folderId == selectedFolderId
+                || rules.contains { diagnostic.ruleIds.contains($0.id) }
+        }
+    }
+
+    func refreshRuleDiagnostics() {
+        let folders = self.folders
+        let rulesByFolder = db.withLock { db in
+            Dictionary(uniqueKeysWithValues: folders.map { ($0.id, (try? db.listRules(folderId: $0.id)) ?? []) })
+        }
+        ruleDiagnostics = RuleDiagnostics.analyze(folders: folders, rulesByFolder: rulesByFolder)
+    }
+
+    /// Checks the selected folder's files for rules that never get them
+    /// because a rule above takes them first. Reads files (content
+    /// conditions), so it runs off the main thread.
+    func findShadowedRules() async -> [RuleDiagnostic] {
+        guard let folder = folders.first(where: { $0.id == selectedFolderId }) else { return [] }
+        let folderRules = rules
+        return await Task.detached(priority: .userInitiated) {
+            RuleDiagnostics.shadowing(folder: folder, rules: folderRules) { Task.isCancelled }
+        }.value
+    }
+
+    /// Sets up a daily inbox inside `source`: creates and watches the inbox
+    /// folder, moves the chosen rules there with a wait of `days` days,
+    /// turns off the chosen ones, and adds the rule that sends new files to
+    /// the inbox. Returns the inbox folder's id.
+    @discardableResult
+    func setUpDailyInbox(source: WatchedFolder, inboxName: String, days: Int, choices: [String: DailyInbox.Choice]) -> String? {
+        let name = inboxName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !name.contains("/") else {
+            showError("Enter a folder name without “/” for the inbox.")
+            return nil
+        }
+        let inboxPath = ((source.path as NSString).appendingPathComponent(name) as NSString).standardizingPath
+        do {
+            try FileManager.default.createDirectory(atPath: inboxPath, withIntermediateDirectories: true)
+        } catch {
+            showError("Forel couldn't create the inbox folder at \(inboxPath): \(error.localizedDescription)")
+            return nil
+        }
+
+        var inbox = folders.first { ($0.path as NSString).standardizingPath == inboxPath }
+        do {
+            if inbox == nil {
+                let created = WatchedFolder(path: inboxPath)
+                try db.withLock { db in try db.insertFolder(created) }
+                inbox = created
+            } else if let existing = inbox, !existing.enabled {
+                db.withLock { db in try? db.toggleFolder(existing.id, enabled: true) }
+            }
+            guard let inbox else { return nil }
+
+            var moved: [String] = []
+            var turnedOff: [String] = []
+            var skipped: [String] = []
+            try db.withLock { db in
+                let sourceRules = try db.listRules(folderId: source.id)
+                for rule in sourceRules {
+                    switch choices[rule.id] ?? DailyInbox.defaultChoice(for: rule) {
+                    case .keepHere:
+                        continue
+                    case .turnOff:
+                        try db.toggleRule(rule.id, enabled: false)
+                        turnedOff.append(rule.name)
+                    case .moveToInbox:
+                        guard DailyInbox.canWait(rule) else {
+                            skipped.append(rule.name)
+                            continue
+                        }
+                        try db.moveRule(rule.id, toFolder: inbox.id)
+                        // Re-read for the priority the move gave it.
+                        guard let placed = try db.listRules(folderId: inbox.id).first(where: { $0.id == rule.id }),
+                              let waiting = DailyInbox.waiting(placed, days: days, inFolder: inbox.id) else { continue }
+                        // Unlinked first, so the wait doesn't reach copies
+                        // of the rule shared with other folders.
+                        try db.saveRule(waiting, sharingWith: [], unlink: true)
+                        moved.append(rule.name)
+                    }
+                }
+                try db.insertRule(DailyInbox.intakeRule(sourceFolderId: source.id, inboxPath: inboxPath))
+            }
+
+            if !paused {
+                coordinator.add(inboxPath)
+                coordinator.refreshWatchedPaths()
+            }
+            reloadFolders()
+            var parts = ["New files in \((source.path as NSString).lastPathComponent) now go to \(name)"]
+            if !moved.isEmpty { parts.append("\(moved.count) rule\(moved.count == 1 ? "" : "s") moved there to wait \(days) day\(days == 1 ? "" : "s")") }
+            if !turnedOff.isEmpty { parts.append("\(turnedOff.count) turned off") }
+            if !skipped.isEmpty { parts.append("kept here (can't wait safely): \(skipped.joined(separator: ", "))") }
+            showRunNowMessage(RunNowMessage(text: parts.joined(separator: " · "), hasFailures: !skipped.isEmpty, folderId: source.id))
+            return inbox.id
+        } catch {
+            showError(error)
+            reloadFolders()
+            return nil
+        }
+    }
+
     /// Runs all enabled rules in the selected folder against every file
     /// currently in it (a manual "Run Now"), bounded by each rule's scope.
     func runNow() {
@@ -1289,6 +1401,10 @@ final class AppModel: ObservableObject {
         }
         var testable = draft
         testable.enabled = true
+        // Saved rules that run before the draft: everything above it, or
+        // every rule when it's new (new rules go to the bottom).
+        let folderRules = db.withLock { db in (try? db.listRules(folderId: folder.id)) ?? [] }
+        let earlierRules = Array(folderRules.prefix { $0.id != draft.id }).filter(\.enabled)
         let matchLimit = previewMatchLimit
         let nonMatchLimit = ruleTestNonMatchSampleLimit
         ruleTestGeneration += 1
@@ -1301,6 +1417,7 @@ final class AppModel: ObservableObject {
             var nonMatches: [FilePreview] = []
             var reachedMatchLimit = false
             var reachedNonMatchLimit = false
+            var takenEarlier: [String: Int] = [:]
             RuleEngine.forEachEntry(root: folder.path, maxDepth: maxDepth) { entry in
                 guard !Task.isCancelled else { return }
                 filesScanned += 1
@@ -1320,6 +1437,10 @@ final class AppModel: ObservableObject {
                 } else {
                     reachedMatchLimit = true
                 }
+                let competition = RuleDiagnostics.competition(path: entry.path, depth: entry.depth, rules: earlierRules)
+                if let winner = competition.winnerRuleId, let name = earlierRules.first(where: { $0.id == winner })?.name {
+                    takenEarlier[name, default: 0] += 1
+                }
             }
             return PreviewResult(
                 filesScanned: filesScanned,
@@ -1327,7 +1448,8 @@ final class AppModel: ObservableObject {
                 matchLimit: matchLimit,
                 reachedMatchLimit: reachedMatchLimit,
                 nonMatches: nonMatches,
-                reachedNonMatchLimit: reachedNonMatchLimit
+                reachedNonMatchLimit: reachedNonMatchLimit,
+                takenEarlier: takenEarlier
             )
         }
         ruleTestTask = scan

@@ -26,6 +26,7 @@ struct RuleListView: View {
     /// rule list's context menu.
     @State private var editingAIEdit: AIEditState?
     @State private var reviewingRule: Rule?
+    @State private var organizingSheet: RuleOrganizingSheet?
     @State private var searchText = ""
     @State private var isSelecting = false
     @State private var selectedRuleIds: Set<String> = []
@@ -106,6 +107,20 @@ struct RuleListView: View {
                 }
                 .sheet(item: $model.previewResult) { result in
                     PreviewSheet(result: result) { model.previewResult = nil }
+                }
+                .sheet(item: $organizingSheet) { sheet in
+                    switch sheet {
+                    case .check:
+                        RuleCheckSheet(
+                            onSuggestOrder: { switchSheet(to: .order) },
+                            onDailyInbox: { switchSheet(to: .dailyInbox) },
+                            onClose: { organizingSheet = nil }
+                        )
+                    case .order:
+                        SuggestOrderSheet { organizingSheet = nil }
+                    case .dailyInbox:
+                        DailyInboxSheet { organizingSheet = nil }
+                    }
                 }
         }
     }
@@ -561,7 +576,40 @@ struct RuleListView: View {
             .fixedSize()
             .disabled(model.selectedFolderId == nil)
 
+            Menu {
+                Button("Check Rules…") { organizingSheet = .check }
+                Button("Suggest Order…") { organizingSheet = .order }
+                    .disabled(model.rules.count < 2)
+                Divider()
+                Button("Set Up Daily Inbox…") { organizingSheet = .dailyInbox }
+            } label: {
+                Label("Organize", systemImage: "list.bullet.indent")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(model.selectedFolderId == nil)
+
             Spacer()
+
+            let warnings = model.selectedFolderDiagnostics.filter { $0.severity == .warning }.count
+            if warnings > 0 {
+                Button {
+                    organizingSheet = .check
+                } label: {
+                    Label("\(warnings) rule issue\(warnings == 1 ? "" : "s")", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+                .buttonStyle(.borderless)
+                .help("Some rules in this folder get in each other's way. Click to see what to change.")
+            }
+        }
+    }
+
+    /// Closes one organizing sheet and opens another once it's gone.
+    private func switchSheet(to sheet: RuleOrganizingSheet) {
+        organizingSheet = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            organizingSheet = sheet
         }
     }
 
