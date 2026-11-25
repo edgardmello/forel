@@ -114,19 +114,22 @@ final class AppModel: ObservableObject {
     private var watcherHistoryRevisionTask: Task<Void, Never>?
         private let hazelAppURL: URL?
 
-    /// Forel's Application Support folder, migrated from the legacy location
-    /// and created if needed. Separate from `init` so the single-instance
-    /// lock can be taken there before the database is opened.
+    /// Forel's Application Support folder, copied over from an earlier
+    /// bundle identifier's folder on first launch and created if needed.
+    /// Separate from `init` so the single-instance lock can be taken there
+    /// before the database is opened.
     static func prepareAppSupportDirectory() throws -> URL {
-        let appSupportRoot = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let appSupport = appSupportRoot.appendingPathComponent("com.lab421.forel", isDirectory: true)
-        migrateLegacyAppSupportDirectoryIfNeeded(root: appSupportRoot, newDirectory: appSupport)
-        try FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
-        return appSupport
+        try AppIdentity.prepareAppSupportDirectory(root: appSupportRoot)
+    }
+
+    static var appSupportRoot: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     }
 
     init(appSupport: URL) throws {
         let dbPath = appSupport.appendingPathComponent("forel.db").path
+        // Before the database opens: it moves upload passwords out of rules.
+        UploadPasswords.store = KeychainUploadPasswordStore()
 
         let db = try Database(path: dbPath)
         self.db = db
@@ -388,19 +391,6 @@ final class AppModel: ObservableObject {
             ?? ["/Applications/Hazel.app", "/Applications/Setapp/Hazel.app"]
                 .map(URL.init(fileURLWithPath:))
                 .first(where: { FileManager.default.fileExists(atPath: $0.path) })
-    }
-
-    /// Forel's bundle identifier moved from `com.forel.app` (`.app` isn't a
-    /// valid reverse-DNS component on macOS) to `com.lab421.forel`. Existing
-    /// users have their database and settings under the old identifier's
-    /// Application Support folder; move that folder to the new location so
-    /// they don't lose rules or history. No-ops once migrated, and never
-    /// overwrites a new-location folder that already exists.
-    private static func migrateLegacyAppSupportDirectoryIfNeeded(root: URL, newDirectory: URL) {
-        let legacyDirectory = root.appendingPathComponent("com.forel.app", isDirectory: true)
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: legacyDirectory.path), !fm.fileExists(atPath: newDirectory.path) else { return }
-        try? fm.moveItem(at: legacyDirectory, to: newDirectory)
     }
 
     func updateAISettings(_ change: (inout AISettings) -> Void) {
@@ -978,8 +968,9 @@ final class AppModel: ObservableObject {
     func findShadowedRules() async -> [RuleDiagnostic] {
         guard let folder = folders.first(where: { $0.id == selectedFolderId }) else { return [] }
         let folderRules = rules
+        let nested = nestedWatchedFolders(under: folder)
         return await Task.detached(priority: .userInitiated) {
-            RuleDiagnostics.shadowing(folder: folder, rules: folderRules) { Task.isCancelled }
+            RuleDiagnostics.shadowing(folder: folder, rules: folderRules, skipping: nested) { Task.isCancelled }
         }.value
     }
 
@@ -1061,6 +1052,12 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Enabled watched folders inside `folder`. Run Now, Dry Run and rule
+    /// tests leave their files to their own rules, as the watcher does.
+    func nestedWatchedFolders(under folder: WatchedFolder) -> Set<String> {
+        RuleEngine.nestedWatchedFolders(under: folder.path, in: folders)
+    }
+
     /// Runs all enabled rules in the selected folder against every file
     /// currently in it (a manual "Run Now"), bounded by each rule's scope.
     func runNow() {
@@ -1083,13 +1080,14 @@ final class AppModel: ObservableObject {
         isRunningNow = true
         Task {
             defer { isRunningNow = false }
+            let nested = nestedWatchedFolders(under: folder)
             let allHistory = await Task.detached(priority: .userInitiated) {
                 let maxDepth = RuleEngine.maxRuleDepth(folderRules)
-                let entries = RuleEngine.walkEntries(root: folder.path, maxDepth: maxDepth)
+                let entries = RuleEngine.walkEntries(root: folder.path, maxDepth: maxDepth, skipping: nested)
                 let batchId = UUID().uuidString
                 var allHistory: [HistoryEntry] = []
                 for entry in entries {
-                    let (_, history) = RuleEngine.run(path: entry.path, depth: entry.depth, rules: folderRules, batchId: batchId, root: folder.path)
+                    let (_, history) = RuleEngine.run(path: entry.path, depth: entry.depth, rules: folderRules, batchId: batchId, root: folder.path, nestedRoots: nested)
                     allHistory.append(contentsOf: history)
                 }
                 return allHistory
@@ -1347,6 +1345,7 @@ final class AppModel: ObservableObject {
             return
         }
         let matchLimit = previewMatchLimit
+        let nested = nestedWatchedFolders(under: folder)
         isPreviewing = true
         Task {
             defer { isPreviewing = false }
@@ -1355,9 +1354,9 @@ final class AppModel: ObservableObject {
                 var filesScanned = 0
                 var matches: [FilePreview] = []
                 var reachedMatchLimit = false
-                RuleEngine.forEachEntry(root: folder.path, maxDepth: maxDepth) { entry in
+                RuleEngine.forEachEntry(root: folder.path, maxDepth: maxDepth, skipping: nested) { entry in
                     filesScanned += 1
-                    guard let match = RuleEngine.previewFile(path: entry.path, depth: entry.depth, rules: folderRules) else {
+                    guard let match = RuleEngine.previewFile(path: entry.path, depth: entry.depth, rules: folderRules, root: folder.path, nestedRoots: nested) else {
                         return
                     }
                     if matches.count < matchLimit {
@@ -1407,6 +1406,7 @@ final class AppModel: ObservableObject {
         let earlierRules = Array(folderRules.prefix { $0.id != draft.id }).filter(\.enabled)
         let matchLimit = previewMatchLimit
         let nonMatchLimit = ruleTestNonMatchSampleLimit
+        let nested = nestedWatchedFolders(under: folder)
         ruleTestGeneration += 1
         let generation = ruleTestGeneration
         isTestingRule = true
@@ -1418,10 +1418,10 @@ final class AppModel: ObservableObject {
             var reachedMatchLimit = false
             var reachedNonMatchLimit = false
             var takenEarlier: [String: Int] = [:]
-            RuleEngine.forEachEntry(root: folder.path, maxDepth: maxDepth) { entry in
+            RuleEngine.forEachEntry(root: folder.path, maxDepth: maxDepth, skipping: nested) { entry in
                 guard !Task.isCancelled else { return }
                 filesScanned += 1
-                guard let match = RuleEngine.previewFile(path: entry.path, depth: entry.depth, rules: [testable], includeNonMatches: true) else {
+                guard let match = RuleEngine.previewFile(path: entry.path, depth: entry.depth, rules: [testable], root: folder.path, includeNonMatches: true, nestedRoots: nested) else {
                     return
                 }
                 if match.rules.first?.matched == false {

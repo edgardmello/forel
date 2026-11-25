@@ -155,7 +155,7 @@ write_info_plist() {
   <key>CFBundleExecutable</key>
   <string>ForelApp</string>
   <key>CFBundleIdentifier</key>
-  <string>com.lab421.forel</string>
+  <string>io.github.edgardmello.forel</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -167,7 +167,7 @@ write_info_plist() {
   <key>CFBundleVersion</key>
   <string>${version_number}</string>
   <key>NSHumanReadableCopyright</key>
-  <string>Copyright © 2026 Lab421</string>
+  <string>Copyright © 2026 Edgard Mello. Based on Forel by lab421.</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSUIElement</key>
@@ -182,7 +182,7 @@ write_info_plist() {
   <array>
     <dict>
       <key>CFBundleURLName</key>
-      <string>com.lab421.forel</string>
+      <string>io.github.edgardmello.forel</string>
       <key>CFBundleURLSchemes</key>
       <array>
         <string>forel</string>
@@ -414,12 +414,14 @@ latest_known_version() {
     tail -n 1
 }
 
-# Bumps x.y.z[-suffix] by patch, minor, or major, keeping any suffix
-# (e.g. 1.3.5-fork -> 1.3.6-fork).
+# Bumps x.y.z[-suffix] by patch, minor, or major, keeping any suffix except
+# the old "-fork" label, which releases no longer carry
+# (e.g. 1.3.5-fork -> 1.3.6, 2.0.0-beta.1 -> 2.0.1-beta.1).
 bump_version() {
   local current="$1" part="$2" core suffix="" major minor patch
   core="${current%%-*}"
   [[ "$current" == *-* ]] && suffix="-${current#*-}"
+  [[ "$suffix" == "-fork" ]] && suffix=""
   IFS=. read -r major minor patch <<<"$core"
   case "$part" in
     patch) patch=$((patch + 1)) ;;
@@ -493,7 +495,7 @@ ask_version() {
 
   if [[ "$choice" == custom ]]; then
     while true; do
-      read -r -p "Version (e.g. v1.2.3 or v1.2.3-fork): " entered || exit 1
+      read -r -p "Version (e.g. v1.4.0): " entered || exit 1
       if is_version "$entered"; then
         choice="$entered"
         break

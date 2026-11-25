@@ -397,6 +397,7 @@ public enum RuleDiagnostics {
         folder: WatchedFolder,
         rules: [Rule],
         fileLimit: Int = 300,
+        skipping nested: Set<String> = [],
         isCancelled: () -> Bool = { false }
     ) -> [RuleDiagnostic] {
         let enabled = rules.filter(\.enabled)
@@ -405,7 +406,7 @@ public enum RuleDiagnostics {
         var counts: [String: Int] = [:]
         var order: [String] = []
         var scanned = 0
-        RuleEngine.forEachEntry(root: folder.path, maxDepth: RuleEngine.maxRuleDepth(enabled)) { entry in
+        RuleEngine.forEachEntry(root: folder.path, maxDepth: RuleEngine.maxRuleDepth(enabled), skipping: nested) { entry in
             guard scanned < fileLimit, !isCancelled() else { return }
             guard !SystemFileFilter.isExcluded((entry.path as NSString).lastPathComponent) else { return }
             scanned += 1

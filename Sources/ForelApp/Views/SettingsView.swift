@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import SwiftUI
+import ForelCore
 
 /// Modern macOS Settings layout: a category sidebar on the left (matching
 /// System Settings' own convention), detail content on the right — instead
@@ -195,7 +196,7 @@ struct SettingsView: View {
                 HStack {
                     Text("GitHub Repository").font(.system(size: 13)).foregroundStyle(ForelTheme.primaryText)
                     Spacer()
-                    Link("lab421/forel", destination: AppInfo.repositoryURL)
+                    Link(AppIdentity.repository, destination: AppInfo.repositoryURL)
                         .font(.system(size: 12))
                 }
                 .padding(.vertical, 10)

@@ -28,8 +28,8 @@ extension ISO8601DateFormatter {
 /// SQLite-backed persistence for watched folders, rules, conditions, actions,
 /// custom tags, action history and app settings. Mirrors the Rust `db` module
 /// schema exactly so the existing alpha database at
-/// `~/Library/Application Support/com.lab421.forel/forel.db` (migrated
-/// automatically from the legacy `com.forel.app` location) keeps working.
+/// `~/Library/Application Support/<AppIdentity.bundleIdentifier>/forel.db`
+/// (copied on first launch from an earlier identifier's folder) keeps working.
 public final class Database: @unchecked Sendable {
     public static let currentSchemaVersion: Int64 = 12
 
@@ -177,6 +177,7 @@ public final class Database: @unchecked Sendable {
             """
         )
         try runMigrations()
+        try? moveUploadPasswordsOutOfDatabase()
     }
 
     // MARK: - App settings
@@ -424,6 +425,12 @@ public final class Database: @unchecked Sendable {
             .filter(\.enabled)
             .filter { Self.isPathPrefix($0.path, of: path) }
             .max { $0.path.count < $1.path.count }
+    }
+
+    /// Enabled watched folders nested inside `root`, whose files a scan of
+    /// `root` must leave to them.
+    public func nestedWatchedFolderPaths(under root: String) -> Set<String> {
+        RuleEngine.nestedWatchedFolders(under: root, in: (try? listFolders()) ?? [])
     }
 
     /// Component-wise prefix check, matching Rust's `Path::starts_with` (a plain
@@ -828,9 +835,51 @@ public final class Database: @unchecked Sendable {
         stmt.bind(1, action.id)
         stmt.bind(2, action.ruleId)
         stmt.bind(3, action.kind.rawValue)
-        stmt.bind(4, action.params.jsonString)
+        stmt.bind(4, Self.paramsKeepingSecretsOut(action).jsonString)
         stmt.bind(5, action.position)
         try stmt.runToCompletion()
+    }
+
+    /// An upload URL typed with a password is stored without it; the
+    /// password goes to `UploadPasswords.store` (the Keychain). If saving it
+    /// there fails, the URL is kept whole so the rule doesn't stop working.
+    static func paramsKeepingSecretsOut(_ action: Action) -> JSONValue {
+        guard action.kind == .upload,
+              case .object(var dict) = action.params,
+              let value = dict[ActionParam.uploadURL]?.stringValue,
+              let split = UploadDestination.separatingPassword(value),
+              UploadPasswords.store.setPassword(split.password, for: split.account) else { return action.params }
+        dict[ActionParam.uploadURL] = .string(split.value)
+        return .object(dict)
+    }
+
+    /// Moves passwords out of upload URLs saved before they went to the
+    /// Keychain. Runs at every launch and does nothing once they're gone,
+    /// so it needs no schema version (older builds keep opening the file).
+    func moveUploadPasswordsOutOfDatabase() throws {
+        let select = try statement("SELECT id, kind, params FROM actions WHERE kind=?1")
+        select.bind(1, ActionKind.upload.rawValue)
+        var updates: [(id: String, params: String)] = []
+        while try select.step() {
+            let action = Action(
+                id: select.columnText(0),
+                ruleId: "",
+                kind: ActionKind(dbValue: select.columnText(1)),
+                params: JSONValue.parse(select.columnText(2)),
+                position: 0
+            )
+            let cleaned = Self.paramsKeepingSecretsOut(action)
+            if cleaned != action.params { updates.append((action.id, cleaned.jsonString)) }
+        }
+        guard !updates.isEmpty else { return }
+        try transaction {
+            for update in updates {
+                let stmt = try statement("UPDATE actions SET params=?1 WHERE id=?2")
+                stmt.bind(1, update.params)
+                stmt.bind(2, update.id)
+                try stmt.runToCompletion()
+            }
+        }
     }
 
     // MARK: - Watched path state

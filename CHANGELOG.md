@@ -6,11 +6,15 @@ All notable changes to Forel are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Changed
+- Forel now checks for updates only in its own repository (github.com/edgardmello/forel) and has its own app identity, separate from the original project it was forked from. On first launch it copies your rules, history and settings over from the previous version; macOS may ask once more for folder access and Full Disk Access. Versions labelled `-fork` count as the same version without the label, so an older `-fork` build is offered the next release.
+- Release builds no longer need an Apple Developer ID: without one they are published ad-hoc signed, with instructions for opening them the first time.
 - Clear History now asks for confirmation and says that cleared actions can no longer be undone.
 - Forel now appears in the Dock whenever one of its windows is open and leaves the Dock, keeping only the menu bar icon, when you close the window. Reopening it from the menu bar, Finder or Spotlight brings the Dock icon back. The "Show Dock icon" setting was removed.
 - `./build.sh` can now pick the release version by itself (`--patch`, `--minor`, `--major` or `--version=`) and can cut the release after a successful build: rename the changelog's Unreleased section to the new version, commit it and create the tag. Release builds also warn about uncommitted changes and list the generated disk images with their sizes.
 
 ### Fixed
+- A watched folder inside another one (such as `Downloads/_Hoje` inside Downloads) now keeps its files to its own rules everywhere: Run Now, Dry Run, Test, Check Rules, the periodic re-check and reconnecting a disk no longer run the outer folder's rules on them, and a move into the inner folder ends the outer folder's rules for that file. Before, only files arriving while Forel watched were handled this way.
+- An upload that stalls or crawls now gives up after an hour instead of holding up the files waiting behind it.
 - A rule that moves a file out of its watched folder now ends that folder's rules for the file. Before, the rules below it kept running on the file at its new place, so an image moved to Pictures could still be sorted into a dated folder there, or a screenshot moved to Google Drive could be moved right back. Actions after the move in the same rule still run, and a move into a subfolder the rules look into still continues. Applies to Run Now, Dry Run and automatic runs.
 - Review with AI now rejects a proposed rule that gives an action an option Forel doesn't have, or a value of the wrong kind, and says which one and what the action accepts, instead of applying a rule that would quietly ignore it. Quoted true/false and numbers are understood.
 - With an Alibaba Coding Plan or Token Plan key (one starting with `sk-sp-`), Generate Code and the model list now explain that these subscription keys only work in the plan's coding tools and point you to a pay-as-you-go key, instead of failing with "Incorrect API key".
@@ -18,6 +22,9 @@ All notable changes to Forel are documented here. Format loosely follows
 - Opening Forel now brings its window to the front instead of leaving it behind other apps' windows, including when it was closed the last time Forel quit.
 - Sort into subfolder now fills in tokens such as `{year}-{month}-{day}` or a named regex group, in Run Now, Dry Run and automatic runs alike, instead of creating a folder literally named after the token. Display notification fills in tokens in its title and text too.
 - Review with AI now tells the AI exactly which tokens Forel has and where they work, and rejects a proposed rule that uses a token Forel doesn't fill in, explaining which one, instead of applying it. It also steers the AI toward conditions that match your goal directly (such as the app a file was downloaded with) and to describe any second rule the goal needs.
+
+### Security
+- Upload passwords typed in a destination URL (`user:password@host`) are now kept in your Keychain instead of Forel's database, and existing ones are moved there on launch. They are no longer passed to the upload on its command line, where other apps on the Mac could read them.
 
 ### Added
 - Organize → Check Rules lists what gets in the way between a folder's rules: a rule that matches almost anything above more specific ones, rules that never get their files because a rule above takes them first (Check Files in Folder looks at up to 300 files, without changing them), dated subfolders no rule sorts any further, files handed between watched folders or going around in a circle, the same rule with different actions in several folders, a watched folder that no longer exists, and rules with no conditions or no name. Show Rule jumps to the rule. The rule list shows how many issues a folder has.

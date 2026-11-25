@@ -25,8 +25,18 @@ struct ForelMacApp: App {
 
     /// Held for the life of the process; see `InstanceLock`.
     private static var instanceLock: InstanceLock?
+    /// Locks on the data folders of earlier bundle identifiers, held so an
+    /// older Forel can't start next to this one and run every rule twice.
+    private static var legacyInstanceLocks: [InstanceLock] = []
 
     init() {
+        for legacy in AppIdentity.legacyAppSupportDirectories(root: AppModel.appSupportRoot) {
+            let legacyLockPath = legacy.appendingPathComponent("forel.lock").path
+            guard let lock = InstanceLock(path: legacyLockPath) else {
+                SingleInstance.handOffToRunningInstance(lockPath: legacyLockPath)
+            }
+            Self.legacyInstanceLocks.append(lock)
+        }
         let appSupport = try! AppModel.prepareAppSupportDirectory()
         let lockPath = appSupport.appendingPathComponent("forel.lock").path
         guard let instanceLock = InstanceLock(path: lockPath) else {

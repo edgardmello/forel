@@ -1501,7 +1501,13 @@ private struct ActionRow: View {
         case .sortIntoSubfolder:
             GlassField(placeholder: "Subfolder path, e.g. Today or {year}/{month}", text: paramBinding(ActionParam.subfolder))
         case .upload:
-            GlassField(placeholder: "FTP, SFTP, or WebDAV destination URL", text: paramBinding(ActionParam.uploadURL))
+            VStack(alignment: .leading, spacing: 6) {
+                GlassField(placeholder: "FTP, SFTP, or WebDAV destination URL", text: paramBinding(ActionParam.uploadURL))
+                Text("A password typed in the URL (user:password@host) is saved in your Keychain when you save the rule, not in Forel's database.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(ForelTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         case .addTag, .removeTag:
             TagTokensEditor(tags: tagsBinding, placeholder: action.kind == .addTag ? "Add tag" : "Tag")
         case .setColorLabel:

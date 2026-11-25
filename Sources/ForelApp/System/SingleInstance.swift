@@ -21,7 +21,11 @@ import ForelCore
 /// build next to the installed app): show the running instance's main window
 /// instead, then quit before opening the database or watching anything.
 enum SingleInstance {
-    static let showMainWindowNotification = Notification.Name("com.lab421.forel.showMainWindow")
+    static let showMainWindowNotification = Notification.Name("\(AppIdentity.bundleIdentifier).showMainWindow")
+    /// What an older Forel, under an earlier bundle identifier, posts when it
+    /// finds this one already running.
+    static let legacyShowMainWindowNotifications = AppIdentity.legacyBundleIdentifiers
+        .map { Notification.Name("\($0).showMainWindow") }
 
     static func handOffToRunningInstance(lockPath: String) -> Never {
         // Activated from here, while this process is still the one the user
@@ -30,12 +34,16 @@ enum SingleInstance {
            let running = NSRunningApplication(processIdentifier: pid) {
             running.activate(options: NSApplication.ActivationOptions(rawValue: 1))
         }
-        DistributedNotificationCenter.default().postNotificationName(
-            showMainWindowNotification,
-            object: nil,
-            userInfo: nil,
-            deliverImmediately: true
-        )
+        // Also posted under the earlier identifiers' names: the running
+        // instance may be an older Forel that only listens for those.
+        for name in [showMainWindowNotification] + legacyShowMainWindowNotifications {
+            DistributedNotificationCenter.default().postNotificationName(
+                name,
+                object: nil,
+                userInfo: nil,
+                deliverImmediately: true
+            )
+        }
         exit(0)
     }
 }

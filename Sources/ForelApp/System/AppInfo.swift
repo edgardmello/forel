@@ -15,13 +15,14 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import Foundation
+import ForelCore
 
 /// App identity shown by both the "About Forel" panel and Settings → About,
 /// so the two never drift apart.
 enum AppInfo {
     static let name = "Forel"
     static let tagline = "Open-source file automation for macOS"
-    static let repositoryURL = URL(string: "https://github.com/lab421/forel")!
+    static let repositoryURL = AppIdentity.repositoryURL
 
     static var version: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"

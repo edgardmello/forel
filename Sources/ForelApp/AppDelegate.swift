@@ -198,12 +198,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        DistributedNotificationCenter.default().addObserver(
-            forName: SingleInstance.showMainWindowNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.openMainWindow() }
+        for name in [SingleInstance.showMainWindowNotification] + SingleInstance.legacyShowMainWindowNotifications {
+            DistributedNotificationCenter.default().addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.openMainWindow() }
+            }
         }
     }
 

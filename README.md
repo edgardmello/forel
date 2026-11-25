@@ -8,18 +8,9 @@
 
 [![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black?style=flat-square&logo=apple)](https://www.apple.com/macos/)
 [![Swift 6](https://img.shields.io/badge/Swift-6-orange?style=flat-square&logo=swift)](https://www.swift.org)
-[![Downloads](https://img.shields.io/github/downloads/lab421/forel/total?style=flat-square)](https://github.com/lab421/forel/releases)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue?style=flat-square)](LICENSE)
 
 <br/>
-
-**New** · project from the Forel team — check out [Ombrelle](https://ombrelle.app) →
-
-<br/>
-
-This project is built and maintained on my personal time. A ⭐ on the repo is the simplest way to say thanks and helps Forel get discovered by others who might need it. For anyone who wants to go further, you can support the work with a [buy me a coffee](https://buymeacoffee.com/lionelguic9) ☕ 
-
-
 
 <img src="assets/app-screen-new-1.png" alt="Forel — main view" width="49%" /> <img src="assets/app-screen-new-2.png" alt="Forel — rule editor" width="49%" />
 
@@ -28,11 +19,9 @@ This project is built and maintained on my personal time. A ⭐ on the repo is t
 
 > **Open source, 100% on-device**
 
-**Install with [Homebrew](https://brew.sh):**
+**Download:** the latest `.dmg` from [Releases](https://github.com/edgardmello/forel/releases).
 
-```sh
-brew install --cask lab421/tap/forel
-```
+This project started as a fork of [Forel by lab421](https://github.com/lab421/forel) and is now developed independently. It doesn't track, update from, or share data with the original project.
 
 ## Why Forel
 
@@ -85,29 +74,16 @@ File matching and processing happen **locally on your Mac**. Forel does not uplo
 
 ## Installation
 
-### Homebrew
-
-```bash
-brew install --cask lab421/tap/forel
-```
-
-or
-
-```bash
-brew tap lab421/tap
-brew install --cask forel
-```
-
 ### Manual
 
-Download the latest release `.dmg` from the [Releases](https://github.com/lab421/forel/releases) page, open it, and drag Forel to your Applications folder.
+Download the latest release `.dmg` from the [Releases](https://github.com/edgardmello/forel/releases) page, open it, and drag Forel to your Applications folder.
 
 ### Build from source
 
 **Prerequisites:** [Swift 6](https://www.swift.org) · macOS 14 or later
 
 ```bash
-git clone https://github.com/lab421/forel.git
+git clone https://github.com/edgardmello/forel.git
 cd forel
 swift build
 swift test
@@ -309,7 +285,7 @@ File path
 Forel is in early development and contributions are very welcome.
 
 ```bash
-git clone https://github.com/lab421/forel.git
+git clone https://github.com/edgardmello/forel.git
 cd forel
 swift build
 swift test
@@ -321,23 +297,12 @@ Please read the repository guidelines before submitting. Bug reports, feature re
 
 ## License
 
-The source code is licensed under **GPL-3.0-or-later**, copyright © 2026 lab421 — see [LICENSE](LICENSE). That license covers the source code only.
+The source code is licensed under **GPL-3.0-or-later** — see [LICENSE](LICENSE). Original code copyright © 2026 lab421; changes in this repository copyright © 2026 Edgard Mello, under the same license. That license covers the source code only.
 
 The **Forel** name, logo, and look are **not** covered by the GPL and are protected separately — see [TRADEMARKS.md](TRADEMARKS.md).
 
 ---
 
-## Star History
-
-<a href="https://star-history.com/#lab421/forel&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=lab421/forel&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=lab421/forel&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=lab421/forel&type=Date" />
-  </picture>
-</a>
-
----
 
 <div align="center">
 
