@@ -27,6 +27,10 @@ All notable changes to Forel are documented here. Format loosely follows
 - Upload passwords typed in a destination URL (`user:password@host`) are now kept in your Keychain instead of Forel's database, and existing ones are moved there on launch. They are no longer passed to the upload on its command line, where other apps on the Mac could read them.
 
 ### Added
+- Run Now shows how many items it has checked out of the total, with a Stop button. Stopping keeps what was already done and says how far it got.
+- The quick panel shows which file the watcher is working on when one takes more than a few seconds, such as a large upload.
+- A folder Forel can't look inside (no permission, or it vanished mid-scan) now appears in the Event Log with the reason, instead of its files being skipped without a word.
+- Settings → About → Diagnostics exports a text file for bug reports with versions, watched folders, what the health check sees, recent failures and recent events. Home folder paths are shortened and no file contents or passwords are included.
 - The menu bar dot turns yellow, and the quick panel says why with a way to fix it, when something stops Forel from working: a watched folder that can't be found, Full Disk Access turned off, or actions that failed in the last day. You also get one notification for each new problem.
 - When Forel wasn't running for a while (it was quit, crashed, or the Mac was off), it now runs your rules on the files that arrived in the meantime when it starts again, and tells you what it did. Files that were already there are left alone.
 - Organize → Coming Up in the Next 24 Hours shows which files rules that wait (such as a daily inbox's "Date Added is older than 1 day") will act on within a day, and what they'll do, without changing anything.

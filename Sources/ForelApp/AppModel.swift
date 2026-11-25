@@ -85,6 +85,21 @@ final class AppModel: ObservableObject {
     /// plain static var, not itself observable.
     @Published var accentVersion: Int = 0
     @Published private(set) var isRunningNow = false
+    /// How far the current Run Now got, for its progress display.
+    @Published private(set) var runNowProgress: RunNowProgress?
+    private var runNowWork: Task<(history: [HistoryEntry], done: Int, total: Int), Never>?
+
+    struct RunNowProgress: Equatable {
+        let done: Int
+        /// `nil` while the folder is still being listed.
+        let total: Int?
+    }
+
+    /// Stops the current Run Now after the file it's on. What it already did
+    /// stays done and is in Activity, with Undo.
+    func stopRunNow() {
+        runNowWork?.cancel()
+    }
     @Published private(set) var runNowMessage: RunNowMessage?
     private var runNowMessageId: UUID?
     @Published private(set) var isPreviewing = false
@@ -159,6 +174,8 @@ final class AppModel: ObservableObject {
                 self?.bumpWatcherHistoryRevision()
             }
         }
+        let sharedEventLog = self.coordinator.eventLog
+        UnreadableFolders.setHandler { event in sharedEventLog.append(event) }
         self.coordinator.eventLog.setChangeHandler { [weak self] in
             Task { @MainActor in
                 self?.bumpEventLogRevision()
@@ -339,6 +356,9 @@ final class AppModel: ObservableObject {
     private var eventLogRevisionTask: Task<Void, Never>?
 
     var eventLog: EventLog { coordinator.eventLog }
+
+    /// The file automatic rules are working on right now, if any.
+    var watcherBusyItem: (path: String, since: Date)? { coordinator.busyItem }
 
     private func bumpEventLogRevision() {
         guard eventLogRevisionTask == nil else { return }
@@ -868,6 +888,37 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// A plain-text report for bug reports (Settings → About).
+    func diagnosticsReport() -> String {
+        let summaries: [DiagnosticsReport.FolderSummary] = folders.map { folder in
+            let folderRules = (try? db.listRules(folderId: folder.id)) ?? []
+            return DiagnosticsReport.FolderSummary(
+                path: folder.path,
+                enabled: folder.enabled,
+                ruleCount: folderRules.count,
+                enabledRuleCount: folderRules.filter(\.enabled).count
+            )
+        }
+        let failures = ((try? db.listHistory(limit: 500)) ?? []).filter { $0.status == .failed }
+        return DiagnosticsReport.make(DiagnosticsReport.Input(
+            appVersion: AppInfo.version,
+            build: AppInfo.build,
+            isPaused: paused,
+            folders: summaries,
+            issues: health?.issues ?? [],
+            events: eventLog.entries(),
+            failures: failures
+        ))
+    }
+
+    func exportDiagnostics(to url: URL) {
+        do {
+            try Data(diagnosticsReport().utf8).write(to: url, options: .atomic)
+        } catch {
+            showError(error)
+        }
+    }
+
     @discardableResult
     func importRules(from url: URL) -> Bool {
         guard let folderId = selectedFolderId else { return false }
@@ -1020,71 +1071,20 @@ final class AppModel: ObservableObject {
     /// the inbox. Returns the inbox folder's id.
     @discardableResult
     func setUpDailyInbox(source: WatchedFolder, inboxName: String, days: Int, choices: [String: DailyInbox.Choice]) -> String? {
-        let name = inboxName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !name.contains("/") else {
-            showError("Enter a folder name without “/” for the inbox.")
-            return nil
-        }
-        let inboxPath = ((source.path as NSString).appendingPathComponent(name) as NSString).standardizingPath
         do {
-            try FileManager.default.createDirectory(atPath: inboxPath, withIntermediateDirectories: true)
-        } catch {
-            showError("Forel couldn't create the inbox folder at \(inboxPath): \(error.localizedDescription)")
-            return nil
-        }
-
-        var inbox = folders.first { ($0.path as NSString).standardizingPath == inboxPath }
-        do {
-            if inbox == nil {
-                let created = WatchedFolder(path: inboxPath)
-                try db.withLock { db in try db.insertFolder(created) }
-                inbox = created
-            } else if let existing = inbox, !existing.enabled {
-                db.withLock { db in try? db.toggleFolder(existing.id, enabled: true) }
-            }
-            guard let inbox else { return nil }
-
-            var moved: [String] = []
-            var turnedOff: [String] = []
-            var skipped: [String] = []
-            try db.withLock { db in
-                let sourceRules = try db.listRules(folderId: source.id)
-                for rule in sourceRules {
-                    switch choices[rule.id] ?? DailyInbox.defaultChoice(for: rule) {
-                    case .keepHere:
-                        continue
-                    case .turnOff:
-                        try db.toggleRule(rule.id, enabled: false)
-                        turnedOff.append(rule.name)
-                    case .moveToInbox:
-                        guard DailyInbox.canWait(rule) else {
-                            skipped.append(rule.name)
-                            continue
-                        }
-                        try db.moveRule(rule.id, toFolder: inbox.id)
-                        // Re-read for the priority the move gave it.
-                        guard let placed = try db.listRules(folderId: inbox.id).first(where: { $0.id == rule.id }),
-                              let waiting = DailyInbox.waiting(placed, days: days, inFolder: inbox.id) else { continue }
-                        // Unlinked first, so the wait doesn't reach copies
-                        // of the rule shared with other folders.
-                        try db.saveRule(waiting, sharingWith: [], unlink: true)
-                        moved.append(rule.name)
-                    }
-                }
-                try db.insertRule(DailyInbox.intakeRule(sourceFolderId: source.id, inboxPath: inboxPath))
-            }
-
+            let outcome = try DailyInbox.apply(source: source, inboxName: inboxName, days: days, choices: choices, in: db)
             if !paused {
-                coordinator.add(inboxPath)
+                coordinator.add(outcome.inbox.path)
                 coordinator.refreshWatchedPaths()
             }
             reloadFolders()
+            let name = (outcome.inbox.path as NSString).lastPathComponent
             var parts = ["New files in \((source.path as NSString).lastPathComponent) now go to \(name)"]
-            if !moved.isEmpty { parts.append("\(moved.count) rule\(moved.count == 1 ? "" : "s") moved there to wait \(days) day\(days == 1 ? "" : "s")") }
-            if !turnedOff.isEmpty { parts.append("\(turnedOff.count) turned off") }
-            if !skipped.isEmpty { parts.append("kept here (can't wait safely): \(skipped.joined(separator: ", "))") }
-            showRunNowMessage(RunNowMessage(text: parts.joined(separator: " · "), hasFailures: !skipped.isEmpty, folderId: source.id))
-            return inbox.id
+            if !outcome.moved.isEmpty { parts.append("\(outcome.moved.count) rule\(outcome.moved.count == 1 ? "" : "s") moved there to wait \(days) day\(days == 1 ? "" : "s")") }
+            if !outcome.turnedOff.isEmpty { parts.append("\(outcome.turnedOff.count) turned off") }
+            if !outcome.skipped.isEmpty { parts.append("kept here (can't wait safely): \(outcome.skipped.joined(separator: ", "))") }
+            showRunNowMessage(RunNowMessage(text: parts.joined(separator: " · "), hasFailures: !outcome.skipped.isEmpty, folderId: source.id))
+            return outcome.inbox.id
         } catch {
             showError(error)
             reloadFolders()
@@ -1118,25 +1118,46 @@ final class AppModel: ObservableObject {
             return
         }
         isRunningNow = true
+        runNowProgress = RunNowProgress(done: 0, total: nil)
         Task {
-            defer { isRunningNow = false }
+            defer {
+                isRunningNow = false
+                runNowProgress = nil
+                runNowWork = nil
+            }
             let nested = nestedWatchedFolders(under: folder)
-            let allHistory = await Task.detached(priority: .userInitiated) {
+            let work = Task.detached(priority: .userInitiated) { [weak self] () -> (history: [HistoryEntry], done: Int, total: Int) in
                 let maxDepth = RuleEngine.maxRuleDepth(folderRules)
                 let entries = RuleEngine.walkEntries(root: folder.path, maxDepth: maxDepth, skipping: nested)
                 let batchId = UUID().uuidString
                 var allHistory: [HistoryEntry] = []
+                var done = 0
+                var lastReport = Date.distantPast
                 for entry in entries {
+                    if Task.isCancelled { break }
                     let (_, history) = RuleEngine.run(path: entry.path, depth: entry.depth, rules: folderRules, batchId: batchId, root: folder.path, nestedRoots: nested)
                     allHistory.append(contentsOf: history)
+                    done += 1
+                    // A few updates a second, not one per file.
+                    if Date().timeIntervalSince(lastReport) > 0.2 {
+                        lastReport = Date()
+                        let progress = RunNowProgress(done: done, total: entries.count)
+                        await MainActor.run { self?.runNowProgress = progress }
+                    }
                 }
-                return allHistory
-            }.value
+                return (allHistory, done, entries.count)
+            }
+            runNowWork = work
+            let result = await work.value
+            let allHistory = result.history
             if !allHistory.isEmpty {
                 db.withLock { db in try? db.insertHistoryEntries(allHistory) }
             }
             reloadHistory()
-            let summary = RunSummary.message(for: allHistory)
+            var summary = RunSummary.message(for: allHistory)
+            if result.done < result.total {
+                summary = "Stopped after \(result.done) of \(result.total) items · " + summary
+            }
             eventLog.append(LoggedEvent(
                 kind: .runNow,
                 path: folder.path,

@@ -123,4 +123,53 @@ import Foundation
         #expect(result.history.first?.status == .applied)
         #expect(FileManager.default.fileExists(atPath: (inbox as NSString).appendingPathComponent("photo.png")))
     }
+
+    // MARK: - Setting it up
+
+    @Test func applyMovesSortersTurnsOffSweepsAndAddsTheIntake() throws {
+        let db = try Database(path: ":memory:")
+        let downloads = TempDir()
+        let source = WatchedFolder(path: downloads.path)
+        try db.insertFolder(source)
+        var today = makeRule(folderId: source.id, name: "Today", actions: [
+            makeAction(.sortIntoSubfolder, .object([ActionParam.subfolder: .string("{year}-{month}-{day}")])),
+        ])
+        today.conditions = [makeCondition(.dateAdded, .withinLast, "1 day", ruleId: today.id)]
+        var docs = makeRule(folderId: source.id, name: "Docs", actions: [move("/tmp/docs")])
+        docs.conditions = [makeCondition(.extension_, .is, "pdf", ruleId: docs.id)]
+        try db.insertRule(today)
+        try db.insertRule(docs)
+
+        let outcome = try DailyInbox.apply(source: source, inboxName: " _Hoje ", days: 2, choices: [:], in: db)
+
+        let inboxPath = (downloads.path as NSString).appendingPathComponent("_Hoje")
+        #expect(outcome.inbox.path == (inboxPath as NSString).standardizingPath)
+        #expect(FileManager.default.fileExists(atPath: inboxPath))
+        #expect(outcome.moved == ["Docs"])
+        #expect(outcome.turnedOff == ["Today"])
+        #expect(outcome.skipped.isEmpty)
+
+        let inboxRules = try db.listRules(folderId: outcome.inbox.id)
+        #expect(inboxRules.map(\.name) == ["Docs"])
+        #expect(inboxRules[0].conditionGroups.flatMap(\.conditions).contains { $0.kind == .dateAdded && $0.operator == .olderThan && $0.value == "2 days" })
+        let sourceRules = try db.listRules(folderId: source.id)
+        #expect(sourceRules.map(\.name) == ["Today", "Send new files to _Hoje"])
+        #expect(sourceRules.first { $0.name == "Today" }?.enabled == false)
+    }
+
+    @Test func applyRejectsANameWithASlashAndReusesAWatchedInbox() throws {
+        let db = try Database(path: ":memory:")
+        let downloads = TempDir()
+        let source = WatchedFolder(path: downloads.path)
+        try db.insertFolder(source)
+        #expect(throws: DailyInbox.SetupError.self) {
+            try DailyInbox.apply(source: source, inboxName: "a/b", days: 1, choices: [:], in: db)
+        }
+
+        let existing = WatchedFolder(path: downloads.dir("_Hoje"), enabled: false)
+        try db.insertFolder(existing)
+        let outcome = try DailyInbox.apply(source: source, inboxName: "_Hoje", days: 1, choices: [:], in: db)
+        #expect(outcome.inbox.id == existing.id)
+        #expect(try db.listFolders().first { $0.id == existing.id }?.enabled == true)
+    }
 }
