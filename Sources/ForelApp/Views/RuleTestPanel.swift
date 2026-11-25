@@ -117,6 +117,9 @@ struct RuleTestPanel: View {
                                 }
                             }
                         } else {
+                            if !result.takenEarlier.isEmpty {
+                                takenEarlierNote(result.takenEarlier, matched: result.matches.count)
+                            }
                             ForEach(result.matches, id: \.path) { match in
                                 FilePreviewRow(match: match)
                             }
@@ -138,6 +141,33 @@ struct RuleTestPanel: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(ForelTheme.accent.opacity(0.18))
         )
+    }
+
+    /// Rules above this one that would take some of the matched files
+    /// first, so this rule never sees them in the folder.
+    private func takenEarlierNote(_ taken: [String: Int], matched: Int) -> some View {
+        let lines = taken.sorted { $0.value > $1.value }.map { name, count in
+            "“\(name)” runs first and takes \(count) of the \(matched) matched file\(matched == 1 ? "" : "s")."
+        }
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(lines, id: \.self) { line in
+                    Text(line)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(ForelTheme.primaryText)
+                }
+                Text("This rule only gets what's left. Move it above, or narrow the other rule's conditions.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(ForelTheme.secondaryText)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.orange.opacity(0.1)))
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func matchLimitNote(_ matchLimit: Int) -> some View {

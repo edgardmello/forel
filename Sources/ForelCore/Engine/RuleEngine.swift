@@ -104,8 +104,12 @@ public struct PreviewResult: Sendable {
     /// test (`includeNonMatches`), never by the folder-wide Dry Run.
     public let nonMatches: [FilePreview]
     public let reachedNonMatchLimit: Bool
+    /// For the rule editor's test: how many of the matched files a rule
+    /// above the tested one takes first, by that rule's name.
+    public let takenEarlier: [String: Int]
 
-    public init(filesScanned: Int, matches: [FilePreview], matchLimit: Int? = nil, reachedMatchLimit: Bool = false, nonMatches: [FilePreview] = [], reachedNonMatchLimit: Bool = false) {
+    public init(filesScanned: Int, matches: [FilePreview], matchLimit: Int? = nil, reachedMatchLimit: Bool = false, nonMatches: [FilePreview] = [], reachedNonMatchLimit: Bool = false, takenEarlier: [String: Int] = [:]) {
+        self.takenEarlier = takenEarlier
         self.filesScanned = filesScanned
         self.matches = matches
         self.matchLimit = matchLimit
@@ -216,6 +220,12 @@ public enum RuleEngine {
                 // later rules in this pass were written assuming it had, so
                 // stop here regardless of whether it ran.
                 if result.isTerminal { break }
+
+                // A move that took the file out of this watched folder ends
+                // the pass: the rules below were written for files that are
+                // still here, and the folder it landed in (if watched) runs
+                // its own rules on it.
+                if movedOutOfWatchedFolder(result.finalPath, root: root, startPath: target.path, startDepth: target.depth) { break }
 
                 // A non-terminal action (e.g. rename) can still change the
                 // file's path; follow it so the next rule in the chain sees
@@ -334,6 +344,8 @@ public enum RuleEngine {
 
                 if result.isTerminal { break }
 
+                if movedOutOfWatchedFolder(result.finalPath, root: root, startPath: target.path, startDepth: target.depth) { break }
+
                 if result.finalPath != currentPath {
                     currentPath = result.finalPath
                     blockedRuleIds.insert(rule.id)
@@ -436,7 +448,7 @@ public enum RuleEngine {
     /// `.any` are order-independent. Used by `run`, which only needs a
     /// yes/no answer; `previewFile` keeps the original order and evaluates
     /// every condition on purpose, to show each one's result in the Dry Run.
-    private static func ruleMatches(_ rule: Rule, path: String, depth: Int) -> Bool {
+    static func ruleMatches(_ rule: Rule, path: String, depth: Int) -> Bool {
         guard ruleInScope(rule, depth: depth) else { return false }
         if hasNoConditions(rule) { return true }
 
@@ -465,10 +477,27 @@ public enum RuleEngine {
         ruleInScope(rule, depth: depth)
     }
 
-    private static func ruleInScope(_ rule: Rule, depth: Int) -> Bool {
+    static func ruleInScope(_ rule: Rule, depth: Int) -> Bool {
         guard let limit = rule.recursionDepth else { return true }
         if limit >= 0 { return depth <= Int(limit) }
         return depth == 0
+    }
+
+    /// True when `finalPath` is no longer inside the watched folder the pass
+    /// started in. Without an explicit `root`, the folder is inferred from
+    /// where the pass started: `startDepth` levels above the start path's
+    /// parent folder.
+    static func movedOutOfWatchedFolder(_ finalPath: String, root: String?, startPath: String, startDepth: Int) -> Bool {
+        let scopeRoot = root ?? inferredRoot(path: startPath, depth: startDepth)
+        return pathDepth(root: scopeRoot, path: finalPath) == nil
+    }
+
+    static func inferredRoot(path: String, depth: Int) -> String {
+        var folder = (path as NSString).deletingLastPathComponent
+        for _ in 0..<max(0, depth) {
+            folder = (folder as NSString).deletingLastPathComponent
+        }
+        return folder
     }
 
     public static func pathDepth(root: String, path: String) -> Int? {
