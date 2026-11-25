@@ -137,6 +137,9 @@ import Foundation
         today.conditions = [makeCondition(.dateAdded, .withinLast, "1 day", ruleId: today.id)]
         var docs = makeRule(folderId: source.id, name: "Docs", actions: [move("/tmp/docs")])
         docs.conditions = [makeCondition(.extension_, .is, "pdf", ruleId: docs.id)]
+        // Stored actions must point at their own rule.
+        today.actions = today.actions.map { var action = $0; action.ruleId = today.id; return action }
+        docs.actions = docs.actions.map { var action = $0; action.ruleId = docs.id; return action }
         try db.insertRule(today)
         try db.insertRule(docs)
 
