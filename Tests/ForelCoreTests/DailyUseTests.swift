@@ -36,7 +36,7 @@ import Foundation
             folderExists: { $0 == "/here" }
         )
         #expect(issues.map(\.id) == ["missing:/gone", "fda", "failures"])
-        #expect(issues.allSatisfy(\.needsAttention))
+        #expect(issues.allSatisfy { $0.needsAttention })
         #expect(issues[2].message().hasPrefix("3 actions failed"))
     }
 
