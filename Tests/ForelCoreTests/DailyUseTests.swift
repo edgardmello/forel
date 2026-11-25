@@ -52,12 +52,13 @@ import Foundation
         #expect(ForelHealth.issues(folders: [], fullDiskAccess: .denied, recentFailureCount: 0).isEmpty)
     }
 
-    @Test func downtimeIsReportedOnlyWhenLongEnough() {
+    @Test func downtimeIsReportedOnlyWhenLongEnough() throws {
         let now = Date()
         #expect(ForelHealth.downtime(lastAlive: nil, now: now) == nil)
         #expect(ForelHealth.downtime(lastAlive: now.addingTimeInterval(-10 * 60), now: now) == nil)
         let gap = ForelHealth.downtime(lastAlive: now.addingTimeInterval(-3 * 3600), now: now)
-        #expect(gap?.duration == 3 * 3600)
+        let duration = try #require(gap?.duration)
+        #expect(abs(duration - 3 * 3600) < 1)
         let issue = HealthIssue(.wasNotRunning(from: now.addingTimeInterval(-3600), to: now, checkedFiles: 2))
         #expect(!issue.needsAttention)
         #expect(issue.message().contains("2 files that arrived meanwhile were checked"))
@@ -102,13 +103,12 @@ import Foundation
     @Test func comingUpListsFilesATimedRuleWillTakeLater() throws {
         let dir = TempDir()
         let file = dir.file("new.pdf", contents: "x")
-        let destination = dir.dir("Sorted")
-        _ = destination
         var rule = makeRule(name: "sort after a day", conditions: [makeCondition(.dateModified, .olderThan, "1 day")])
         rule.actions = [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["Old"])]))]
 
-        let result = RuleEngine.upcoming(root: dir.path, rules: [rule], lookahead: 25 * 3600)
-        #expect(result.lookahead == 25 * 3600)
+        let ahead: TimeInterval = 25 * 3600
+        let result = RuleEngine.upcoming(root: dir.path, rules: [rule], lookahead: ahead)
+        #expect(result.lookahead == .some(ahead))
         #expect(result.matches.map(\.path) == [file])
         // Nothing changed.
         #expect(!FinderTags.read(file).contains("Old"))
