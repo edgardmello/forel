@@ -34,7 +34,7 @@ import Foundation
         var nested: Set<String> { RuleEngine.nestedWatchedFolders(under: outer.path, in: (try? db.listFolders()) ?? []) }
     }
 
-    /// Outer folder with one rule that labels every file at any depth
+    /// Outer folder with one rule that tags every file at any depth
     /// ("modified within the last day" makes it time-dependent, so the re-check runs
     /// it too). The inbox inside it is watched, with no rules of its own.
     private func fixture() throws -> Fixture {
@@ -47,9 +47,9 @@ import Foundation
         let outerFolder = WatchedFolder(path: outer.path)
         try db.insertFolder(outerFolder)
         try db.insertFolder(WatchedFolder(path: inbox))
-        var rule = makeRule(folderId: outerFolder.id, name: "label everything", recursionDepth: nil)
+        var rule = makeRule(folderId: outerFolder.id, name: "tag everything", recursionDepth: nil)
         rule.conditions = [makeCondition(.dateModified, .withinLast, "1 day", ruleId: rule.id)]
-        rule.actions = [makeAction(.setColorLabel, .object(["color": .string("Red")]), ruleId: rule.id)]
+        rule.actions = [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["Seen"])]), ruleId: rule.id)]
         try db.insertRule(rule)
         return Fixture(db: db, outer: outer, outerFolder: outerFolder, inbox: inbox, outerFile: outerFile, inboxFile: inboxFile, rules: try db.listRules(folderId: outerFolder.id))
     }
@@ -76,7 +76,7 @@ import Foundation
         #expect(RuleEngine.walkEntries(root: f.outer.path, maxDepth: nil).map(\.path).contains(f.inboxFile))
     }
 
-    /// The same fixture through each path; each must label only the outer
+    /// The same fixture through each path; each must tag only the outer
     /// folder's own file.
     @Test func dryRunRunNowAndWatcherAgreeOnNestedFolders() throws {
         // Dry Run / rule test: walk + preview.
@@ -94,32 +94,32 @@ import Foundation
         for entry in RuleEngine.walkEntries(root: manual.outer.path, maxDepth: nil, skipping: manual.nested) {
             _ = RuleEngine.run(path: entry.path, depth: entry.depth, rules: manual.rules, batchId: "now", root: manual.outer.path, nestedRoots: manual.nested)
         }
-        #expect(FinderTags.currentColorName(manual.outerFile) == "Red")
-        #expect(FinderTags.currentColorName(manual.inboxFile) == "")
+        #expect(FinderTags.read(manual.outerFile).contains("Seen"))
+        #expect(!FinderTags.read(manual.inboxFile).contains("Seen"))
 
         // Watcher: a rescan of the outer folder (dropped events).
         let rescan = try fixture()
         WatcherCoordinator(db: rescan.db).handle(event: .rescanSubtree(rescan.outer.path))
-        #expect(FinderTags.currentColorName(rescan.outerFile) == "Red")
-        #expect(FinderTags.currentColorName(rescan.inboxFile) == "")
+        #expect(FinderTags.read(rescan.outerFile).contains("Seen"))
+        #expect(!FinderTags.read(rescan.inboxFile).contains("Seen"))
 
         // Watcher: the scheduled re-check of time-dependent rules.
         let recheck = try fixture()
         WatcherCoordinator(db: recheck.db).performRecheck()
-        #expect(FinderTags.currentColorName(recheck.outerFile) == "Red")
-        #expect(FinderTags.currentColorName(recheck.inboxFile) == "")
+        #expect(FinderTags.read(recheck.outerFile).contains("Seen"))
+        #expect(!FinderTags.read(recheck.inboxFile).contains("Seen"))
 
         // Watcher: catching up after the disk comes back.
         let catchUp = try fixture()
         WatcherCoordinator(db: catchUp.db).performCatchUp(root: catchUp.outer.path)
-        #expect(FinderTags.currentColorName(catchUp.outerFile) == "Red")
-        #expect(FinderTags.currentColorName(catchUp.inboxFile) == "")
+        #expect(FinderTags.read(catchUp.outerFile).contains("Seen"))
+        #expect(!FinderTags.read(catchUp.inboxFile).contains("Seen"))
     }
 
     @Test func liveEventInNestedFolderUsesOnlyThatFoldersRules() throws {
         let f = try fixture()
         WatcherCoordinator(db: f.db).handle(path: f.inboxFile)
-        #expect(FinderTags.currentColorName(f.inboxFile) == "")
+        #expect(!FinderTags.read(f.inboxFile).contains("Seen"))
     }
 
     // MARK: - A move into a nested watched folder ends the pass
@@ -134,8 +134,8 @@ import Foundation
             actions: [makeAction(.moveToFolder, .object(["destination": .string(inbox)]))]
         )
         let label = makeRule(
-            name: "label everything",
-            actions: [makeAction(.setColorLabel, .object(["color": .string("Red")]))],
+            name: "tag everything",
+            actions: [makeAction(.addTag, .object([ActionParam.tags: .stringArray(["Seen"])]))],
             recursionDepth: nil
         )
         return (outer, inbox, file, moved, [toInbox, label])
@@ -146,7 +146,7 @@ import Foundation
         let result = RuleEngine.run(path: f.file, depth: 0, rules: f.rules, batchId: "inbox", root: f.outer.path, nestedRoots: [f.inbox])
         #expect(result.matched == ["to inbox"])
         #expect(FileManager.default.fileExists(atPath: f.moved))
-        #expect(FinderTags.currentColorName(f.moved) == "")
+        #expect(!FinderTags.read(f.moved).contains("Seen"))
     }
 
     @Test func previewStopsAfterMovingIntoNestedWatchedFolder() throws {
@@ -158,7 +158,7 @@ import Foundation
     @Test func moveIntoPlainSubfolderStillContinues() {
         let f = moveIntoInboxFixture()
         let result = RuleEngine.run(path: f.file, depth: 0, rules: f.rules, batchId: "plain", root: f.outer.path)
-        #expect(result.matched == ["to inbox", "label everything"])
-        #expect(FinderTags.currentColorName(f.moved) == "Red")
+        #expect(result.matched == ["to inbox", "tag everything"])
+        #expect(FinderTags.read(f.moved).contains("Seen"))
     }
 }
