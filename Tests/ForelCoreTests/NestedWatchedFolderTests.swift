@@ -135,8 +135,8 @@ import Foundation
         )
         let label = makeRule(
             name: "label everything",
-            recursionDepth: nil,
-            actions: [makeAction(.setColorLabel, .object(["color": .string("Red")]))]
+            actions: [makeAction(.setColorLabel, .object(["color": .string("Red")]))],
+            recursionDepth: nil
         )
         return (outer, inbox, file, moved, [toInbox, label])
     }
