@@ -14,6 +14,7 @@ All notable changes to Forel are documented here. Format loosely follows
 - `./build.sh` can now pick the release version by itself (`--patch`, `--minor`, `--major` or `--version=`) and can cut the release after a successful build: rename the changelog's Unreleased section to the new version, commit it and create the tag. Release builds also warn about uncommitted changes and list the generated disk images with their sizes.
 
 ### Fixed
+- AppleScript and JavaScript actions that print a lot no longer stall until their 60-second timeout while Forel is busy with many files.
 - A watched folder inside another one (such as `Downloads/_Hoje` inside Downloads) now keeps its files to its own rules everywhere: Run Now, Dry Run, Test, Check Rules, the periodic re-check and reconnecting a disk no longer run the outer folder's rules on them, and a move into the inner folder ends the outer folder's rules for that file. Before, only files arriving while Forel watched were handled this way.
 - An upload that stalls or crawls now gives up after an hour instead of holding up the files waiting behind it.
 - A rule that moves a file out of its watched folder now ends that folder's rules for the file. Before, the rules below it kept running on the file at its new place, so an image moved to Pictures could still be sorted into a dated folder there, or a screenshot moved to Google Drive could be moved right back. Actions after the move in the same rule still run, and a move into a subfolder the rules look into still continues. Applies to Run Now, Dry Run and automatic runs.
