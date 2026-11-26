@@ -721,6 +721,21 @@ struct RuleListView: View {
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .padding(.top, 8)
+                Menu {
+                    ForEach(RuleTemplate.allCases) { template in
+                        Button {
+                            guard let folderId = model.selectedFolderId else { return }
+                            editingRule = template.rule(folderId: folderId)
+                        } label: {
+                            Label(localized(template.title), systemImage: template.systemImage)
+                        }
+                    }
+                } label: {
+                    Text("Start from a Template")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Opens a ready-made rule in the editor. Nothing runs until you save it and turn it on.")
             }
         }
         .frame(maxWidth: .infinity)

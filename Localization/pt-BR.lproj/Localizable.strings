@@ -410,3 +410,11 @@
 "seconds" = "segundos";
 "starts with" = "começa com";
 "“Keep here” rules still act right away (for example removing duplicates). A new rule at the bottom sends everything else to the inbox. Rules you turn off stay in the list so you can turn them back on." = "Regras em “Manter aqui” continuam agindo na hora (por exemplo, removendo duplicatas). Uma nova regra no fim manda todo o resto para a entrada. As regras que você desativar ficam na lista para poderem ser reativadas.";
+"Start from a Template" = "Começar de um Modelo";
+"Opens a ready-made rule in the editor. Nothing runs until you save it and turn it on." = "Abre uma regra pronta no editor. Nada roda até você salvar e ativar.";
+"Move PDFs to Documents" = "Mover PDFs para Documentos";
+"Sort images into monthly folders" = "Organizar imagens em pastas por mês";
+"Collect screenshots in Pictures" = "Juntar capturas de tela em Imagens";
+"Unzip ZIP archives" = "Descompactar arquivos ZIP";
+"Move installers older than a week to the Trash" = "Mover instaladores com mais de uma semana para o Lixo";
+"Tag files added more than 30 days ago" = "Etiquetar arquivos incluídos há mais de 30 dias";
