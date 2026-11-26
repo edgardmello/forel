@@ -34,7 +34,7 @@ struct ContentView: View {
             }
         }
         .toolbarBackground(ForelTheme.background, for: .windowToolbar)
-        .alert(model.alertTitle, isPresented: errorBinding) {
+        .alert(localized(model.alertTitle), isPresented: errorBinding) {
             Button("OK") { model.errorMessage = nil }
         } message: {
             Text(model.errorMessage ?? "")
@@ -44,7 +44,7 @@ struct ContentView: View {
             isPresented: sharedImportBinding,
             presenting: model.pendingSharedImport
         ) { pending in
-            Button("Import \(pending.rules.count == 1 ? "Rule" : "\(pending.rules.count) Rules")") { model.confirmSharedImport() }
+            Button(pending.rules.count == 1 ? String(localized: "Import Rule") : String(localized: "Import \(pending.rules.count) Rules")) { model.confirmSharedImport() }
             Button("Cancel", role: .cancel) { model.pendingSharedImport = nil }
         } message: { pending in
             Text(sharedImportMessage(pending))

@@ -65,7 +65,7 @@ struct RuleJSONSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             ViewHeader(
                 title: "Rule as JSON",
-                subtitle: "The scope, conditions and actions of “\(rule.name.isEmpty ? "this rule" : rule.name)”, as it is in the editor now",
+                subtitle: String(localized: "The scope, conditions and actions of “\(rule.name.isEmpty ? "this rule" : rule.name)”, as it is in the editor now"),
                 systemImage: "curlybraces"
             )
             RuleJSONView(rule: rule)

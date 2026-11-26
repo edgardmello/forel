@@ -273,18 +273,27 @@ import Foundation
         #expect(plan.finalPath == file)
     }
 
+    // Output well beyond the ~64 KB a pipe holds before blocking the
+    // script. One test per language, so a hang points at its interpreter.
     @Test(.timeLimit(.minutes(1)))
-    func scriptWithLargeOutputDoesNotHang() throws {
-        // Well beyond the ~64 KB a pipe holds before blocking the script
-        // (the AppleScript doubles its string up to 320 KB: appending 20,000
-        // times took over a minute on CI runners).
+    func javaScriptWithLargeOutputDoesNotHang() throws {
         let dir = TempDir()
         let file = dir.file("report.txt", contents: "report")
         let javaScript = makeAction(.runJavaScript, .object([ActionParam.script: .string("Array(500000).join('x')")]))
-        let appleScript = makeAction(.runAppleScript, .object([ActionParam.script: .string("set output to \"xxxxxxxxxx\"\nrepeat 15 times\nset output to output & output\nend repeat\nreturn output")]))
-
+        let start = Date()
         #expect(try ActionExecutor.execute(javaScript, path: file).newPath == file)
+        print("JavaScript with 500 KB of output took \(Date().timeIntervalSince(start)) s")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func appleScriptWithLargeOutputDoesNotHang() throws {
+        let dir = TempDir()
+        let file = dir.file("report.txt", contents: "report")
+        // Doubling reaches 320 KB in 15 steps.
+        let appleScript = makeAction(.runAppleScript, .object([ActionParam.script: .string("set output to \"xxxxxxxxxx\"\nrepeat 15 times\nset output to output & output\nend repeat\nreturn output")]))
+        let start = Date()
         #expect(try ActionExecutor.execute(appleScript, path: file).newPath == file)
+        print("AppleScript with 320 KB of output took \(Date().timeIntervalSince(start)) s")
     }
 
     @Test func scriptFilesReceiveTheMatchedFile() throws {

@@ -752,7 +752,7 @@ final class AppModel: ObservableObject {
             reloadRules()
             showNotice(
                 title: "Folder already watched",
-                message: "\"\((existingFolder.path as NSString).lastPathComponent)\" is already in your watched folders."
+                message: String(localized: "\"\((existingFolder.path as NSString).lastPathComponent)\" is already in your watched folders.")
             )
             return
         }
@@ -805,7 +805,7 @@ final class AppModel: ObservableObject {
             reloadRules()
             showNotice(
                 title: "Folder already watched",
-                message: "\"\((existingFolder.path as NSString).lastPathComponent)\" is already in your watched folders."
+                message: String(localized: "\"\((existingFolder.path as NSString).lastPathComponent)\" is already in your watched folders.")
             )
             return
         }
@@ -866,7 +866,7 @@ final class AppModel: ObservableObject {
         }
         guard !new.isEmpty else { return }
         showNotice(
-            title: new.count == 1 ? new[0].title : "\(new.count) issues with \"\(rule.name)\"",
+            title: new.count == 1 ? new[0].title : String(localized: "\(new.count) issues with \"\(rule.name)\""),
             message: new.map(\.message).joined(separator: "\n\n") + "\n\nThe rule was saved. Organize → Check Rules lists every issue in this folder."
         )
     }
@@ -882,7 +882,7 @@ final class AppModel: ObservableObject {
         do {
             let data = try RuleTransfer.exportForel(rules)
             try data.write(to: url, options: .atomic)
-            showRunNowMessage(RunNowMessage(text: "Exported \(rules.count) rule\(rules.count == 1 ? "" : "s")", hasFailures: false, folderId: selectedFolderId ?? ""))
+            showRunNowMessage(RunNowMessage(text: String(localized: "Exported \(rules.count) rule\(rules.count == 1 ? "" : "s")"), hasFailures: false, folderId: selectedFolderId ?? ""))
         } catch {
             showError(error)
         }
@@ -929,7 +929,7 @@ final class AppModel: ObservableObject {
             }
             reloadRules()
             if result.issues.isEmpty {
-                showRunNowMessage(RunNowMessage(text: "Imported \(result.rules.count) rule\(result.rules.count == 1 ? "" : "s")", hasFailures: false, folderId: folderId))
+                showRunNowMessage(RunNowMessage(text: String(localized: "Imported \(result.rules.count) rule\(result.rules.count == 1 ? "" : "s")"), hasFailures: false, folderId: folderId))
             } else {
                 alertTitle = "Imported with review needed"
                 errorMessage = "Imported \(result.rules.count) rule\(result.rules.count == 1 ? "" : "s"). Rules with unsupported Hazel parts were disabled.\n\n"
@@ -994,8 +994,8 @@ final class AppModel: ObservableObject {
             ? nil
             : folders.first { $0.id == folderId }?.path.split(separator: "/").last.map(String.init)
         showRunNowMessage(RunNowMessage(
-            text: destination.map { "Copied “\(rule.name)” to \($0) — starts disabled" }
-                ?? "Duplicated “\(rule.name)” — starts disabled",
+            text: destination.map { String(localized: "Copied “\(rule.name)” to \($0) — starts disabled") }
+                ?? String(localized: "Duplicated “\(rule.name)” — starts disabled"),
             hasFailures: false,
             folderId: selectedFolderId ?? ""
         ))
@@ -1015,7 +1015,7 @@ final class AppModel: ObservableObject {
         reloadRules()
         let destination = folders.first { $0.id == folderId }?.path.split(separator: "/").last.map(String.init) ?? "folder"
         showRunNowMessage(RunNowMessage(
-            text: "Moved “\(rule.name)” to \(destination)",
+            text: String(localized: "Moved “\(rule.name)” to \(destination)"),
             hasFailures: false,
             folderId: selectedFolderId ?? ""
         ))
@@ -1181,7 +1181,7 @@ final class AppModel: ObservableObject {
     /// Parses and carries out a `forel://` link.
     func handle(url: URL) {
         guard let command = ForelURLCommand(url: url) else {
-            showNotice(title: "Unknown Forel link", message: "Forel doesn't understand “\(url.absoluteString)”. Settings → Automation lists the links it supports.")
+            showNotice(title: "Unknown Forel link", message: String(localized: "Forel doesn't understand “\(url.absoluteString)”. Settings → Automation lists the links it supports."))
             return
         }
         handle(command)
@@ -1193,7 +1193,7 @@ final class AppModel: ObservableObject {
         switch command {
         case .runFolder(let path):
             guard let folder = folders.first(where: { ($0.path as NSString).standardizingPath == path }) else {
-                showNotice(title: "Can't run that folder", message: "“\(path)” isn't one of Forel's watched folders. Add it in the sidebar first, or check the path in the link.")
+                showNotice(title: "Can't run that folder", message: String(localized: "“\(path)” isn't one of Forel's watched folders. Add it in the sidebar first, or check the path in the link."))
                 return
             }
             let folderRules = db.withLock { db in (try? db.listRules(folderId: folder.id)) ?? [] }.filter(\.enabled)
@@ -1210,7 +1210,7 @@ final class AppModel: ObservableObject {
                 return nil
             }
             guard let match else {
-                showNotice(title: "Can't find that rule", message: "No rule is named “\(nameOrId)”. Check the rule's name in the link — it has to match exactly, apart from capitalization.")
+                showNotice(title: "Can't find that rule", message: String(localized: "No rule is named “\(nameOrId)”. Check the rule's name in the link — it has to match exactly, apart from capitalization."))
                 return
             }
             var runnable = match.1
@@ -1253,7 +1253,7 @@ final class AppModel: ObservableObject {
             .filter { standardized.hasPrefix(($0.path as NSString).standardizingPath + "/") }
             .max { $0.path.count < $1.path.count }
         guard let folder = containing else {
-            showNotice(title: "Not in a watched folder", message: "“\((path as NSString).lastPathComponent)” isn't inside any folder Forel watches, so no rule looks at it. Add its folder under Watched Folders first.")
+            showNotice(title: "Not in a watched folder", message: String(localized: "“\((path as NSString).lastPathComponent)” isn't inside any folder Forel watches, so no rule looks at it. Add its folder under Watched Folders first."))
             return
         }
         let folderRules = db.withLock { db in (try? db.listRules(folderId: folder.id)) ?? [] }
@@ -1295,7 +1295,7 @@ final class AppModel: ObservableObject {
             detailRoute = .rules
             reloadRules()
             showRunNowMessage(RunNowMessage(
-                text: "Imported \(pending.rules.count) rule\(pending.rules.count == 1 ? "" : "s"), turned off — try a Dry Run before enabling",
+                text: String(localized: "Imported \(pending.rules.count) rule\(pending.rules.count == 1 ? "" : "s"), turned off — try a Dry Run before enabling"),
                 hasFailures: false,
                 folderId: pending.folder.id
             ))
@@ -1310,7 +1310,7 @@ final class AppModel: ObservableObject {
             let url = try RuleShareLink.url(for: [rule])
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(url.absoluteString, forType: .string)
-            showRunNowMessage(RunNowMessage(text: "Copied a link to “\(rule.name)”", hasFailures: false, folderId: rule.folderId))
+            showRunNowMessage(RunNowMessage(text: String(localized: "Copied a link to “\(rule.name)”"), hasFailures: false, folderId: rule.folderId))
         } catch {
             showError(error)
         }
@@ -1468,7 +1468,7 @@ final class AppModel: ObservableObject {
                 eventLog.append(LoggedEvent(
                     kind: .dryRun,
                     path: folder.path,
-                    message: "\(result.filesScanned) items scanned, \(matched) would be changed"
+                    message: String(localized: "\(result.filesScanned) items scanned, \(matched) would be changed")
                 ))
             }
         }

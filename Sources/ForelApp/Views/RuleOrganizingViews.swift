@@ -54,7 +54,7 @@ struct RuleCheckSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             ViewHeader(
                 title: "Check Rules",
-                subtitle: "How the rules in \(folderName) work together",
+                subtitle: String(localized: "How the rules in \(folderName) work together"),
                 systemImage: "checklist"
             )
 
@@ -178,6 +178,7 @@ struct FolderFlowSheet: View {
     let onClose: () -> Void
 
     @State private var nodes: [FolderFlow.Node] = []
+    @AppStorage("folderFlowShowsDiagram") private var showsDiagram = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -185,18 +186,40 @@ struct FolderFlowSheet: View {
                 title: "Folder Flow",
                 subtitle: "Where each watched folder's rules send files",
                 systemImage: "point.3.connected.trianglepath.dotted"
-            )
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    ForEach(nodes) { node in
-                        FolderFlowCard(node: node, name: name(of:), onShowRule: { ruleId in
-                            onClose()
-                            model.reveal(ruleId: ruleId, inFolder: node.folder.id)
-                        })
+            ) {
+                Picker("", selection: $showsDiagram) {
+                    Label("Diagram", systemImage: "point.3.connected.trianglepath.dotted").tag(true)
+                    Label("List", systemImage: "list.bullet").tag(false)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .fixedSize()
+            }
+            if showsDiagram {
+                FolderFlowDiagram(nodes: nodes, name: name(of:))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(nsColor: .textBackgroundColor)))
+                HStack(spacing: 14) {
+                    legend(color: ForelTheme.accent, dashed: false, text: "Rule sends files")
+                    legend(color: ForelTheme.accent, dashed: true, text: "Rule is turned off")
+                    legend(color: .orange, dashed: false, text: "Loop")
+                    Spacer()
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(ForelTheme.secondaryText)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(nodes) { node in
+                            FolderFlowCard(node: node, name: name(of:), onShowRule: { ruleId in
+                                onClose()
+                                model.reveal(ruleId: ruleId, inFolder: node.folder.id)
+                            })
+                        }
                     }
                 }
+                .scrollIndicators(.never)
             }
-            .scrollIndicators(.never)
             HStack {
                 Text("Rules that are turned off are shown dimmed. Destinations with tokens show the part before the first token.")
                     .font(.system(size: 11))
@@ -208,12 +231,24 @@ struct FolderFlowSheet: View {
             }
         }
         .padding(16)
-        .frame(width: 640, height: 560)
+        .frame(width: 760, height: 560)
         .background(ForelTheme.background)
         .onAppear {
             let pairs = model.allRules()
             let rulesByFolder = Dictionary(grouping: pairs, by: { $0.folder.id }).mapValues { $0.map(\.rule) }
             nodes = FolderFlow.map(folders: model.folders, rulesByFolder: rulesByFolder)
+        }
+    }
+
+    private func legend(color: Color, dashed: Bool, text: String) -> some View {
+        HStack(spacing: 5) {
+            Path { path in
+                path.move(to: CGPoint(x: 0, y: 5))
+                path.addLine(to: CGPoint(x: 22, y: 5))
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: 1.5, dash: dashed ? [5, 4] : []))
+            .frame(width: 22, height: 10)
+            Text(localized(text))
         }
     }
 
@@ -519,7 +554,7 @@ struct DailyInboxSheet: View {
 
     private var recheckNote: String {
         model.recheckIntervalMinutes > 0
-            ? "Forel checks waiting files every \(model.recheckIntervalMinutes) minutes."
+            ? String(localized: "Forel checks waiting files every \(model.recheckIntervalMinutes) minutes.")
             : "Turn on the periodic re-check in Settings, or waiting files are only sorted by Run Now."
     }
 
