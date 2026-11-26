@@ -1118,17 +1118,22 @@ public enum ActionExecutor {
         return (process.terminationStatus, output.text(), errors.text())
     }
 
-    /// Reads a pipe to its end on a background thread.
+    /// Reads a pipe to its end on a thread of its own. Not a dispatch queue:
+    /// when the shared pool is busy (many files at once, or a parallel test
+    /// run) a queued read may not start before the script fills the pipe,
+    /// and the script then blocks until it times out.
     private final class PipeReader: @unchecked Sendable {
         private var data = Data()
         private let done = DispatchSemaphore(value: 0)
 
         init(_ pipe: Pipe) {
             let handle = pipe.fileHandleForReading
-            DispatchQueue.global(qos: .utility).async {
+            let thread = Thread { [self] in
                 self.data = handle.readDataToEndOfFile()
                 self.done.signal()
             }
+            thread.name = "Forel script output"
+            thread.start()
         }
 
         /// Waits for the pipe to close, then returns what was read, trimmed.
