@@ -125,7 +125,7 @@ struct AISettingsPane: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer()
-                            Toggle("Remember reviews", isOn: Binding(get: { model.rememberReviews }, set: model.setRememberReviews))
+                            Toggle("Remember reviews", isOn: Binding(get: { model.rememberReviews }, set: { model.setRememberReviews($0) }))
                                 .labelsHidden()
                                 .toggleStyle(.switch)
                                 .controlSize(.small)
