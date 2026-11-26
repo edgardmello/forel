@@ -68,7 +68,7 @@ struct RuleCheckSheet: View {
                             Text("Checking files…")
                         }
                     } else {
-                        Label(shadowed == nil ? "Check Files in Folder" : "Check Files Again", systemImage: "doc.text.magnifyingglass")
+                        Label(localized(shadowed == nil ? "Check Files in Folder" : "Check Files Again"), systemImage: "doc.text.magnifyingglass")
                     }
                 }
                 .buttonStyle(SecondaryButtonStyle())

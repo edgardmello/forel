@@ -62,7 +62,7 @@ struct QuickPanelView: View {
                 GlassCard {
                     ToggleRow(
                         title: "Watching",
-                        subtitle: model.paused ? "Paused — new files are ignored" : "Watching folders — rules run automatically",
+                        subtitle: localized(model.paused ? "Paused — new files are ignored" : "Watching folders — rules run automatically"),
                         isOn: watchingBinding
                     )
                 }

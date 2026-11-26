@@ -5,6 +5,11 @@ All notable changes to Forel are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Dry Run now says when rules in the folder are turned off and weren't checked, instead of only reporting that no files match.
+- Rules started from a template get a translated name, and more labels (watching status, rule on/off, Check Files in Folder, Would run, the folder subtitle) now appear in Portuguese.
+
 ### Changed
 - More of Forel appears in Portuguese (Brazil): messages with counts and names, such as rule counts, import and export results, Run Now and Dry Run summaries, Review with AI progress and alert titles.
 - Forel now checks for updates only in its own repository (github.com/edgardmello/forel) and has its own app identity, separate from the original project it was forked from. On first launch it copies your rules, history and settings over from the previous version; macOS may ask once more for folder access and Full Disk Access. Versions labelled `-fork` count as the same version without the label, so an older `-fork` build is offered the next release.
