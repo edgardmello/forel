@@ -125,6 +125,8 @@ struct RuleListView: View {
                         SuggestOrderSheet { organizingSheet = nil }
                     case .dailyInbox:
                         DailyInboxSheet { organizingSheet = nil }
+                    case .flow:
+                        FolderFlowSheet { organizingSheet = nil }
                     }
                 }
         }
@@ -601,6 +603,7 @@ struct RuleListView: View {
                     .help("Shows what rules that wait (such as \"Date Added is older than 1 day\") will do here within a day, without changing anything")
                 Divider()
                 Button("Set Up Daily Inbox…") { organizingSheet = .dailyInbox }
+                Button("Folder Flow…") { organizingSheet = .flow }
             } label: {
                 Label("Organize", systemImage: "list.bullet.indent")
             }

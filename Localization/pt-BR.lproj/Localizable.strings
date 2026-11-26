@@ -121,6 +121,7 @@
 "Each folder has its own actions and enabled setting. New linked rules start disabled with no actions." = "Cada pasta tem suas próprias ações e seu próprio ajuste de ativação. Novas regras vinculadas começam desativadas e sem ações.";
 "Each rule is judged on the file as it is now. When an earlier rule moves or renames it, later rules see the result." = "Cada regra avalia o arquivo como ele está agora. Quando uma regra anterior o move ou renomeia, as seguintes veem o resultado.";
 "Edit" = "Editar";
+"Edit Rule" = "Editar Regra";
 "Edit…" = "Editar…";
 "Embedded Script" = "Script Embutido";
 "Enable" = "Ativar";
@@ -418,3 +419,16 @@
 "Unzip ZIP archives" = "Descompactar arquivos ZIP";
 "Move installers older than a week to the Trash" = "Mover instaladores com mais de uma semana para o Lixo";
 "Tag files added more than 30 days ago" = "Etiquetar arquivos incluídos há mais de 30 dias";
+"Simple" = "Simples";
+"Advanced" = "Avançado";
+"This rule uses advanced options (scope, condition groups or sharing), so they stay visible." = "Esta regra usa opções avançadas (alcance, grupos de condições ou compartilhamento), então elas continuam visíveis.";
+"Simple shows the name, conditions and actions. Advanced adds scope, condition groups, sharing across folders and JSON." = "Simples mostra o nome, as condições e as ações. Avançado acrescenta alcance, grupos de condições, compartilhamento entre pastas e JSON.";
+"Folder Flow" = "Fluxo das Pastas";
+"Folder Flow…" = "Fluxo das Pastas…";
+"Where each watched folder's rules send files" = "Para onde as regras de cada pasta vigiada mandam os arquivos";
+"Rules that are turned off are shown dimmed. Destinations with tokens show the part before the first token." = "Regras desativadas aparecem esmaecidas. Destinos com tokens mostram a parte antes do primeiro token.";
+"Receives files from" = "Recebe arquivos de";
+"Files stay in this folder." = "Os arquivos ficam nesta pasta.";
+"Loop" = "Ciclo";
+"Files can come back here from that folder and go around in a circle. Check Rules explains how to fix it." = "Os arquivos podem voltar para cá daquela pasta e ficar andando em círculo. Verificar Regras explica como resolver.";
+"Deleted or uploaded" = "Apagado ou enviado";

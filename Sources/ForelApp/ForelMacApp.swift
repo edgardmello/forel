@@ -146,6 +146,7 @@ private struct RulesMenuCommands: View {
             .disabled(!hasFolder || model.isPreviewing || !model.selectedFolderHasTimedRules)
         Divider()
         Button("Check Rules…") { showOrganizing(.check) }
+        Button("Folder Flow…") { showOrganizing(.flow) }
             .disabled(!hasFolder)
         Button("Suggest Order…") { showOrganizing(.order) }
             .disabled(!hasFolder || model.rules.count < 2)
