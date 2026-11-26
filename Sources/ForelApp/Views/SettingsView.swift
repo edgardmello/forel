@@ -104,7 +104,7 @@ struct SettingsView: View {
             GlassCard {
                 ToggleRow(
                     title: "Automatic watching",
-                    subtitle: model.paused ? "Paused — new files are ignored" : "Watching folders — rules run automatically",
+                    subtitle: localized(model.paused ? "Paused — new files are ignored" : "Watching folders — rules run automatically"),
                     isOn: watchingBinding
                 )
                 Divider().overlay(ForelTheme.divider).padding(.leading, 14)

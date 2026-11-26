@@ -32,7 +32,7 @@ struct SidebarView: View {
             GlassCard {
                 ToggleRow(
                     title: "Watching",
-                    subtitle: model.paused ? "Paused — new files are ignored" : "Rules run automatically",
+                    subtitle: localized(model.paused ? "Paused — new files are ignored" : "Rules run automatically"),
                     isOn: watchingBinding
                 )
             }

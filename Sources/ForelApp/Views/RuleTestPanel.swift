@@ -330,7 +330,7 @@ extension ActionPreview {
     var statusLabel: String {
         if warning != nil { return "Likely to fail" }
         switch status {
-        case .wouldRun: return "Would run"
+        case .wouldRun: return localized("Would run")
         case .wouldSkip: return "Would skip"
         case .blockedByConflict: return "Blocked by conflict"
         case .needsConfirmation: return "Needs confirmation"

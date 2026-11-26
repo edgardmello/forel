@@ -519,3 +519,14 @@
 "List" = "Lista";
 "Rule sends files" = "Regra envia arquivos";
 "Rule is turned off" = "Regra desativada";
+
+"Select a folder to manage its rules" = "Selecione uma pasta para gerenciar as regras dela";
+"Enabled" = "Ativada";
+"Disabled" = "Desativada";
+"Check Files in Folder" = "Verificar Arquivos na Pasta";
+"Check Files Again" = "Verificar Arquivos de Novo";
+"Paused — new files are ignored" = "Pausada: arquivos novos são ignorados";
+"Rules run automatically" = "As regras rodam automaticamente";
+"Watching folders — rules run automatically" = "Vigiando pastas: as regras rodam automaticamente";
+"Would run" = "Rodaria";
+"No files match the rules that are on. %lld rule(s) in this folder are off and weren't checked — turn them on to include them." = "Nenhum arquivo combina com as regras ativas. %lld regra(s) desta pasta estão desativadas e não foram verificadas. Ative-as para incluí-las.";

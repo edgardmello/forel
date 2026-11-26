@@ -106,7 +106,7 @@ struct RuleListView: View {
                     )
                 }
                 .sheet(item: $model.previewResult) { result in
-                    PreviewSheet(result: result) { model.previewResult = nil }
+                    PreviewSheet(result: result, disabledRuleCount: model.rules.filter { !$0.enabled }.count) { model.previewResult = nil }
                 }
                 .onChange(of: model.requestedOrganizingSheet) { requested in
                     guard let requested else { return }
@@ -509,7 +509,7 @@ struct RuleListView: View {
         ViewHeader(
             title: selectedFolder.map { ($0.path as NSString).lastPathComponent } ?? "Rules",
             subtitle: model.selectedFolderId == nil
-                ? "Select a folder to manage its rules"
+                ? localized("Select a folder to manage its rules")
                 : "\(model.rules.count) rule\(model.rules.count == 1 ? "" : "s")\(viewMode == .list ? " · drag to reorder" : "")",
             systemImage: selectedFolder == nil ? nil : "folder.fill"
         ) {
@@ -728,7 +728,9 @@ struct RuleListView: View {
                     ForEach(RuleTemplate.allCases) { template in
                         Button {
                             guard let folderId = model.selectedFolderId else { return }
-                            editingRule = template.rule(folderId: folderId)
+                            var rule = template.rule(folderId: folderId)
+                            rule.name = localized(template.title)
+                            editingRule = rule
                         } label: {
                             Label(localized(template.title), systemImage: template.systemImage)
                         }
@@ -799,7 +801,7 @@ private struct RuleCard: View {
                 .pointingHandCursor()
 
                 Toggle(isOn: enabledBinding) {
-                    Text(rule.enabled ? "Enabled" : "Disabled")
+                    Text(localized(rule.enabled ? "Enabled" : "Disabled"))
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(rule.enabled ? ForelTheme.accent : ForelTheme.secondaryText)
                 }
@@ -1144,6 +1146,7 @@ extension Rule: Identifiable {}
 
 private struct PreviewSheet: View {
     let result: PreviewResult
+    var disabledRuleCount = 0
     let onClose: () -> Void
 
     private var subtitle: String {
@@ -1152,6 +1155,12 @@ private struct PreviewSheet: View {
             return String(localized: "\(result.filesScanned) items scanned · \(count) waiting")
         }
         return String(localized: "\(result.filesScanned) items scanned · \(count) matched")
+    }
+
+    private var emptyMessage: String {
+        if result.lookahead != nil { return localized("No rule that waits will act on a file here in that time.") }
+        guard disabledRuleCount > 0 else { return localized("No files match the current rules.") }
+        return String(localized: "No files match the rules that are on. \(disabledRuleCount) rule(s) in this folder are off and weren't checked — turn them on to include them.")
     }
 
     private var title: String {
@@ -1188,7 +1197,7 @@ private struct PreviewSheet: View {
                     }
 
                     if result.matches.isEmpty {
-                        Text(result.lookahead == nil ? "No files match the current rules." : "No rule that waits will act on a file here in that time.")
+                        Text(emptyMessage)
                             .font(.system(size: 12))
                             .foregroundStyle(ForelTheme.secondaryText)
                             .frame(maxWidth: .infinity)

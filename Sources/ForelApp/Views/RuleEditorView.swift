@@ -294,7 +294,7 @@ struct RuleEditorView: View {
 
             HStack {
                 Toggle(isOn: $rule.enabled) {
-                    Text(rule.enabled ? "Enabled" : "Disabled")
+                    Text(localized(rule.enabled ? "Enabled" : "Disabled"))
                 }
                     .toggleStyle(.switch)
                     .tint(ForelTheme.accent)
