@@ -223,8 +223,8 @@ struct AutomationSettingsPane: View {
         switch minutes {
         case 0: return "Off"
         case 60: return "Every hour"
-        case let m where m % 60 == 0: return "Every \(m / 60) hours"
-        default: return "Every \(minutes) minutes"
+        case let m where m % 60 == 0: return String(localized: "Every \(m / 60) hours")
+        default: return String(localized: "Every \(minutes) minutes")
         }
     }
 

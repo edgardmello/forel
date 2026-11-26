@@ -823,7 +823,7 @@ private struct RuleCard: View {
                             metaPill(icon: "line.3.horizontal.decrease.circle", text: "\(rule.conditions.count)")
                             metaPill(icon: "bolt.fill", text: "\(rule.actions.count)")
                             if let linked = model.linkedFolderCounts[rule.id] {
-                                metaPill(icon: "link", text: "also in \(linked) folder\(linked == 1 ? "" : "s")")
+                                metaPill(icon: "link", text: String(localized: "also in \(linked) folder\(linked == 1 ? "" : "s")"))
                                     .help("This rule's basics and conditions are shared with \(linked) other watched folder\(linked == 1 ? "" : "s"); editing them changes every copy. Each folder keeps its own actions.")
                             }
                             if let stats = model.runStats(for: rule) {
@@ -1149,15 +1149,15 @@ private struct PreviewSheet: View {
     private var subtitle: String {
         let count = result.reachedMatchLimit ? "\(result.matches.count)+" : "\(result.matches.count)"
         if result.lookahead != nil {
-            return "\(result.filesScanned) items scanned · \(count) waiting"
+            return String(localized: "\(result.filesScanned) items scanned · \(count) waiting")
         }
-        return "\(result.filesScanned) items scanned · \(count) matched"
+        return String(localized: "\(result.filesScanned) items scanned · \(count) matched")
     }
 
     private var title: String {
         guard let lookahead = result.lookahead else { return "Preview (Dry Run)" }
         let hours = Int(lookahead / 3600)
-        return hours == 24 ? "Coming Up in the Next 24 Hours" : "Coming Up in the Next \(hours) Hours"
+        return hours == 24 ? "Coming Up in the Next 24 Hours" : String(localized: "Coming Up in the Next \(hours) Hours")
     }
 
     var body: some View {

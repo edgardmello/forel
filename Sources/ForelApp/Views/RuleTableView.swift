@@ -61,7 +61,7 @@ struct RuleTableView: View {
 
     private var selectionBar: some View {
         HStack(spacing: 6) {
-            Text(selection.isEmpty ? "\(rules.count) rule\(rules.count == 1 ? "" : "s")" : "\(selection.count) selected")
+            Text(selection.isEmpty ? String(localized: "\(rules.count) rule\(rules.count == 1 ? "" : "s")") : String(localized: "\(selection.count) selected"))
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(ForelTheme.secondaryText)
                 .padding(.leading, 4)
@@ -187,7 +187,7 @@ struct RuleTableView: View {
                 Button("Enable") { model.setRulesEnabled(targets, true) }
                 Button("Disable") { model.setRulesEnabled(targets, false) }
                 Divider()
-                Button(targets.count == 1 ? "Delete…" : "Delete \(targets.count) Rules…", role: .destructive) {
+                Button(targets.count == 1 ? String(localized: "Delete…") : String(localized: "Delete \(targets.count) Rules…"), role: .destructive) {
                     onDelete(targets)
                 }
             }
@@ -258,7 +258,7 @@ private struct RuleInspector: View {
                     Image(systemName: "sidebar.right")
                         .font(.system(size: 22))
                         .foregroundStyle(ForelTheme.secondaryText)
-                    Text(selectionCount > 1 ? "\(selectionCount) rules selected" : "No rule selected")
+                    Text(selectionCount > 1 ? String(localized: "\(selectionCount) rules selected") : String(localized: "No rule selected"))
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(ForelTheme.primaryText)
                     Text(selectionCount > 1 ? "Use the bar above to change them together." : "Select a rule to see what it does.")
@@ -295,7 +295,7 @@ private struct RuleInspector: View {
         switch rule.recursionDepth {
         case nil: return "This folder and all subfolders"
         case 0?: return "This folder only"
-        case let depth?: return "\(depth) level\(depth == 1 ? "" : "s") of subfolders"
+        case let depth?: return String(localized: "\(depth) level\(depth == 1 ? "" : "s") of subfolders")
         }
     }
 
@@ -311,8 +311,8 @@ private struct RuleInspector: View {
             return "No runs"
         }
         return stats.failedCount == 0
-            ? "\(stats.successCount) successful"
-            : "\(stats.successCount) successful, \(stats.failedCount) failed"
+            ? String(localized: "\(stats.successCount) successful")
+            : String(localized: "\(stats.successCount) successful, \(stats.failedCount) failed")
     }
 }
 

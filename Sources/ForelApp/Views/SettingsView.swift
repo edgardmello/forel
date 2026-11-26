@@ -243,7 +243,7 @@ struct SettingsView: View {
         Binding(get: { launchAtLogin }, set: { enabled in
             model.setWantsLaunchAtLogin(enabled)
             if LoginItem.isPackagedApp, case .failure(let error) = LoginItem.setEnabled(enabled) {
-                loginItemError = "macOS refused the change: \(error.localizedDescription). You can try again, or review Forel under Login Items & Extensions in System Settings."
+                loginItemError = String(localized: "macOS refused the change: \(error.localizedDescription). You can try again, or review Forel under Login Items & Extensions in System Settings.")
             }
             refreshLaunchAtLoginState()
         })

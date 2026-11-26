@@ -6,6 +6,7 @@ All notable changes to Forel are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Changed
+- More of Forel appears in Portuguese (Brazil): messages with counts and names, such as rule counts, import and export results, Run Now and Dry Run summaries, Review with AI progress and alert titles.
 - Forel now checks for updates only in its own repository (github.com/edgardmello/forel) and has its own app identity, separate from the original project it was forked from. On first launch it copies your rules, history and settings over from the previous version; macOS may ask once more for folder access and Full Disk Access. Versions labelled `-fork` count as the same version without the label, so an older `-fork` build is offered the next release.
 - Release builds no longer need an Apple Developer ID: without one they are published ad-hoc signed, with instructions for opening them the first time.
 - Clear History now asks for confirmation and says that cleared actions can no longer be undone.
@@ -27,6 +28,7 @@ All notable changes to Forel are documented here. Format loosely follows
 - Upload passwords typed in a destination URL (`user:password@host`) are now kept in your Keychain instead of Forel's database, and existing ones are moved there on launch. They are no longer passed to the upload on its command line, where other apps on the Mac could read them.
 
 ### Added
+- Folder Flow can now be shown as a diagram: watched folders as boxes in hand-off order, arrows to where their rules send files, dashed for rules that are off and orange for loops. List keeps the detailed view.
 - Organize → Folder Flow shows, for every watched folder, where its rules send files: on to another watched folder, somewhere else, or to the Trash, and which folders send files to it. Loops between folders are marked.
 - The rule editor has Simple and Advanced views. Simple shows the name, conditions and actions; Advanced adds scope, condition groups, sharing across folders and JSON. A rule that already uses advanced options always shows them.
 - A folder with no rules offers Start from a Template: move PDFs to Documents, sort images into monthly folders, collect screenshots, unzip archives, move week-old installers to the Trash, or tag files older than 30 days. The rule opens in the editor turned off, so nothing runs until you save it and turn it on.

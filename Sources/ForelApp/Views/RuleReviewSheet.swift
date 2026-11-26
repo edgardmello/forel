@@ -106,8 +106,8 @@ struct RuleReviewSheet: View {
             ViewHeader(
                 title: showingEdit ? "Suggested Rule" : "Review with AI",
                 subtitle: showingEdit
-                    ? "\(settings.provider.label) rewrote “\(rule.name.isEmpty ? "this rule" : rule.name)” with \(appliedCount) suggestion\(appliedCount == 1 ? "" : "s")"
-                    : "\(settings.provider.label) checks “\(rule.name.isEmpty ? "this rule" : rule.name)” and suggests improvements",
+                    ? String(localized: "\(settings.provider.label) rewrote “\(rule.name.isEmpty ? "this rule" : rule.name)” with \(appliedCount) suggestion\(appliedCount == 1 ? "" : "s")")
+                    : String(localized: "\(settings.provider.label) checks “\(rule.name.isEmpty ? "this rule" : rule.name)” and suggests improvements"),
                 systemImage: showingEdit ? "curlybraces" : "sparkles"
             )
 
@@ -285,9 +285,9 @@ struct RuleReviewSheet: View {
 
     private func progressText(_ phase: Phase) -> String {
         switch phase {
-        case .analyzing: return "Analyzing the rule with \(settings.provider.label)…"
-        case .editing: return "\(settings.provider.label) is writing the rule with \(chosen.count) suggestion\(chosen.count == 1 ? "" : "s")…"
-        case .replying: return "\(settings.provider.label) is considering your reply…"
+        case .analyzing: return String(localized: "Analyzing the rule with \(settings.provider.label)…")
+        case .editing: return String(localized: "\(settings.provider.label) is writing the rule with \(chosen.count) suggestion\(chosen.count == 1 ? "" : "s")…")
+        case .replying: return String(localized: "\(settings.provider.label) is considering your reply…")
         }
     }
 
@@ -310,7 +310,7 @@ struct RuleReviewSheet: View {
             ?? (try? RuleReviewer.reviewConversation(rule: rule, folderPath: folderPath, otherRules: otherRules, goal: goal))
         guard let conversation else { return nil }
         let tokens = conversation.estimatedTokens
-        return "Goes to \(host) (\(settings.model)): about \(tokens.formatted()) tokens per request, billed by your AI service."
+        return String(localized: "Goes to \(host) (\(settings.model)): about \(tokens.formatted()) tokens per request, billed by your AI service.")
     }
 
     private func analyze() {

@@ -127,7 +127,7 @@ struct RuleEditorView: View {
                 RuleValidationBanner(messages: validationMessages)
             }
             if let saveFailure {
-                RuleValidationBanner(messages: ["Couldn’t save this rule. \(saveFailure)"])
+                RuleValidationBanner(messages: [String(localized: "Couldn’t save this rule. \(saveFailure)")])
             }
             if let aiEdit {
                 AIEditNotice(
@@ -709,7 +709,7 @@ private struct ScopeEditor: View {
     private var scopeSummary: String {
         guard let depth else { return "All subfolder levels" }
         let safeDepth = max(1, depth)
-        return "\(safeDepth) subfolder level\(safeDepth == 1 ? "" : "s")"
+        return String(localized: "\(safeDepth) subfolder level\(safeDepth == 1 ? "" : "s")")
     }
 }
 
@@ -1377,7 +1377,7 @@ private struct FilePickerField: View {
                     Image(systemName: editor == nil ? "folder" : "arrow.up.forward.app")
                 }
                 .buttonStyle(IconButtonStyle())
-                .help(editor.map { "Open in \($0.name)" } ?? "Show in Finder")
+                .help(editor.map { String(localized: "Open in \($0.name)") } ?? "Show in Finder")
             }
         }
     }
@@ -2329,7 +2329,7 @@ private struct DestinationFolderField: View {
     private var preview: String {
         let candidate = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !candidate.isEmpty else { return "" }
-        return "Preview: \(TokenExpander.previewExpand(candidate))"
+        return String(localized: "Preview: \(TokenExpander.previewExpand(candidate))")
     }
 
     /// A token chip appended to an empty destination would leave a bare
@@ -2457,15 +2457,15 @@ private struct RenamePatternEditor: View {
         let previewName = TokenExpander.previewExpand(candidate)
         let displayName = cleanFileName ? ActionExecutor.cleanFileName(previewName) : previewName
         if displayName == "." || displayName == ".." {
-            return "⚠️ Pattern resolves to '\(displayName)' which is not a valid filename"
+            return String(localized: "⚠️ Pattern resolves to '\(displayName)' which is not a valid filename")
         }
         if displayName.utf8.count > 255 {
             return "⚠️ Pattern resolves to a filename longer than 255 characters"
         }
         if let last = displayName.last, last == "." || last == " " {
-            return "⚠️ Pattern resolves to '\(displayName)' — trailing '.' or space is not supported"
+            return String(localized: "⚠️ Pattern resolves to '\(displayName)' — trailing '.' or space is not supported")
         }
-        return "Preview: \(displayName)"
+        return String(localized: "Preview: \(displayName)")
     }
 
     private func tokenButton(_ token: (placeholder: String, label: String)) -> some View {
