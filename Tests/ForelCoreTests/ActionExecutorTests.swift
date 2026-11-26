@@ -275,11 +275,13 @@ import Foundation
 
     @Test(.timeLimit(.minutes(1)))
     func scriptWithLargeOutputDoesNotHang() throws {
-        // Well beyond the ~64 KB a pipe holds before blocking the script.
+        // Well beyond the ~64 KB a pipe holds before blocking the script
+        // (the AppleScript doubles its string up to 320 KB: appending 20,000
+        // times took over a minute on CI runners).
         let dir = TempDir()
         let file = dir.file("report.txt", contents: "report")
         let javaScript = makeAction(.runJavaScript, .object([ActionParam.script: .string("Array(500000).join('x')")]))
-        let appleScript = makeAction(.runAppleScript, .object([ActionParam.script: .string("set output to \"\"\nrepeat 20000 times\nset output to output & \"xxxxxxxxxx\"\nend repeat\nreturn output")]))
+        let appleScript = makeAction(.runAppleScript, .object([ActionParam.script: .string("set output to \"xxxxxxxxxx\"\nrepeat 15 times\nset output to output & output\nend repeat\nreturn output")]))
 
         #expect(try ActionExecutor.execute(javaScript, path: file).newPath == file)
         #expect(try ActionExecutor.execute(appleScript, path: file).newPath == file)
