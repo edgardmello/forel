@@ -902,7 +902,7 @@ private struct ConditionKindMenu: View {
                                 HStack {
                                     Image(systemName: kind.iconSystemName)
                                         .frame(width: 16)
-                                    Text(kind.label)
+                                    Text(localized(kind.label))
                                 }
                             }
                         }
@@ -915,7 +915,7 @@ private struct ConditionKindMenu: View {
                             HStack {
                                 Image(systemName: kind.iconSystemName)
                                     .frame(width: 16)
-                                Text(kind.label)
+                                Text(localized(kind.label))
                             }
                         }
                     }
@@ -932,7 +932,7 @@ private struct ConditionOperatorMenu: View {
     var body: some View {
         RuleSelectMenu(title: selection.label) {
             ForEach(operators, id: \.self) { op in
-                Button(op.label) { selection = op }
+                Button(localized(op.label)) { selection = op }
             }
         }
     }
@@ -953,7 +953,7 @@ private struct ActionKindMenu: View {
                                 HStack {
                                     Image(systemName: kind.iconSystemName)
                                         .frame(width: 16)
-                                    Text(kind.label)
+                                    Text(localized(kind.label))
                                 }
                             }
                         }
@@ -966,7 +966,7 @@ private struct ActionKindMenu: View {
                             HStack {
                                 Image(systemName: kind.iconSystemName)
                                     .frame(width: 16)
-                                Text(kind.label)
+                                Text(localized(kind.label))
                             }
                         }
                     }
@@ -1005,7 +1005,7 @@ private struct RuleSelectMenu<Content: View>: View {
             content
         } label: {
             HStack(spacing: 6) {
-                Text(title)
+                Text(localized(title))
                     .font(.system(size: 12))
                     .foregroundStyle(ForelTheme.primaryText)
                     .lineLimit(1)

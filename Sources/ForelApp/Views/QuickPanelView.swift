@@ -162,7 +162,7 @@ private struct QuickCount: View {
             Text("\(value)")
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(ForelTheme.primaryText)
-            Text(label)
+            Text(localized(label))
                 .font(.system(size: 11))
                 .foregroundStyle(ForelTheme.secondaryText)
         }

@@ -224,7 +224,7 @@ struct SettingsView: View {
 
     private func aboutRow(title: String, value: String) -> some View {
         HStack {
-            Text(title).font(.system(size: 13)).foregroundStyle(ForelTheme.primaryText)
+            Text(localized(title)).font(.system(size: 13)).foregroundStyle(ForelTheme.primaryText)
             Spacer()
             Text(value)
                 .font(.system(size: 12))

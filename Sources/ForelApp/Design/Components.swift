@@ -15,6 +15,14 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import SwiftUI
+
+/// The UI text for `key` in the user's language (Localization/*.lproj in the
+/// app bundle), or `key` itself when there's no translation. For text that
+/// reaches a view as a `String` rather than a literal, which SwiftUI would
+/// otherwise show untranslated.
+func localized(_ key: String) -> String {
+    NSLocalizedString(key, comment: "")
+}
 import AppKit
 import ForelCore
 
@@ -45,7 +53,7 @@ struct SectionLabel: View {
     let title: String
 
     var body: some View {
-        Text(title.uppercased())
+        Text(localized(title).uppercased())
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(ForelTheme.secondaryText)
             .padding(.horizontal, 2)
@@ -150,8 +158,8 @@ struct ToggleRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(ForelTheme.primaryText)
-                Text(subtitle).font(.system(size: 11)).foregroundStyle(ForelTheme.secondaryText)
+                Text(localized(title)).font(.system(size: 13, weight: .semibold)).foregroundStyle(ForelTheme.primaryText)
+                Text(localized(subtitle)).font(.system(size: 11)).foregroundStyle(ForelTheme.secondaryText)
             }
             Spacer()
             ForelSwitch(isOn: $isOn)
@@ -228,7 +236,7 @@ struct PickerRow<Value: Hashable, Content: View>: View {
 
     var body: some View {
         HStack {
-            Text(title).font(.system(size: 13)).foregroundStyle(ForelTheme.primaryText)
+            Text(localized(title)).font(.system(size: 13)).foregroundStyle(ForelTheme.primaryText)
             Spacer()
             Picker("", selection: $selection) { options }
                 .labelsHidden()
@@ -251,13 +259,13 @@ struct SettingsActionRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(ForelTheme.primaryText)
+                Text(localized(title)).font(.system(size: 13, weight: .semibold)).foregroundStyle(ForelTheme.primaryText)
                 if let subtitle {
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(ForelTheme.secondaryText)
+                    Text(localized(subtitle)).font(.system(size: 11)).foregroundStyle(ForelTheme.secondaryText)
                 }
             }
             Spacer()
-            Button(buttonTitle, action: action)
+            Button(localized(buttonTitle), action: action)
                 .buttonStyle(.bordered)
                 .tint(ForelTheme.accent)
         }
@@ -278,7 +286,7 @@ struct QuickPanelFooterButton: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: systemImage).font(.system(size: 10, weight: .medium))
-                Text(title).font(.system(size: 11, weight: .medium))
+                Text(localized(title)).font(.system(size: 11, weight: .medium))
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 7)
@@ -300,7 +308,7 @@ struct FooterLink: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: systemImage).font(.system(size: 11))
-                Text(title).font(.system(size: 12))
+                Text(localized(title)).font(.system(size: 12))
             }
         }
         .buttonStyle(.plain)
@@ -395,11 +403,11 @@ struct ViewHeader<Trailing: View>: View {
                 BrandMark()
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(title)
+                Text(localized(title))
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(ForelTheme.primaryText)
                     .lineLimit(1)
-                Text(subtitle)
+                Text(localized(subtitle))
                     .font(.system(size: 11))
                     .foregroundStyle(ForelTheme.secondaryText)
                     .lineLimit(1)

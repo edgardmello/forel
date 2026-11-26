@@ -151,7 +151,7 @@ private struct EventRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(event.kind.label)
+                    Text(localized(event.kind.label))
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(ForelTheme.primaryText)
                     if let path = event.path {

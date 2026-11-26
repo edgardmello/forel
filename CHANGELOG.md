@@ -27,6 +27,7 @@ All notable changes to Forel are documented here. Format loosely follows
 - Upload passwords typed in a destination URL (`user:password@host`) are now kept in your Keychain instead of Forel's database, and existing ones are moved there on launch. They are no longer passed to the upload on its command line, where other apps on the Mac could read them.
 
 ### Added
+- Forel speaks Portuguese (Brazil) when that's your Mac's language: menus, settings, the rule editor's conditions and actions, and most messages. Some messages that include numbers or names are still in English.
 - Run Now shows how many items it has checked out of the total, with a Stop button. Stopping keeps what was already done and says how far it got.
 - The quick panel shows which file the watcher is working on when one takes more than a few seconds, such as a large upload.
 - A folder Forel can't look inside (no permission, or it vanished mid-scan) now appears in the Event Log with the reason, instead of its files being skipped without a word.
