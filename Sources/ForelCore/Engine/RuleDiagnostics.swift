@@ -273,7 +273,7 @@ public enum RuleDiagnostics {
     }
 
     /// The watched folder (other than `source`) a destination lands in.
-    private static func watchedFolder(containing destination: String, in folders: [WatchedFolder], excluding source: WatchedFolder) -> WatchedFolder? {
+    static func watchedFolder(containing destination: String, in folders: [WatchedFolder], excluding source: WatchedFolder) -> WatchedFolder? {
         folders
             .filter { $0.id != source.id && RuleEngine.pathDepth(root: $0.path, path: destination + "/x") != nil }
             .max { $0.path.count < $1.path.count }

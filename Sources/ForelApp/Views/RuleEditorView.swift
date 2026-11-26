@@ -64,6 +64,9 @@ struct RuleEditorView: View {
     @State private var newSharedFolderIds: Set<String> = []
     @State private var unlinkFromFolders = false
     @State private var saveFailure: String?
+    /// Simple shows a name, conditions and actions; Advanced adds scope,
+    /// condition groups, sharing across folders and JSON.
+    @AppStorage("ruleEditorShowsAdvanced") private var prefersAdvanced = false
     @EnvironmentObject private var model: AppModel
     private let preferredHeight: CGFloat
     private let linkedFolderIds: Set<String>
@@ -96,15 +99,28 @@ struct RuleEditorView: View {
                 subtitle: "Conditions decide which files match; actions decide what happens",
                 systemImage: "slider.horizontal.3"
             ) {
-                Button {
-                    showingJSON = true
-                } label: {
-                    Label("View as JSON", systemImage: "curlybraces")
+                Picker("", selection: advancedBinding) {
+                    Text("Simple").tag(false)
+                    Text("Advanced").tag(true)
                 }
-                .buttonStyle(SecondaryButtonStyle())
-                .help("Show this rule's scope, conditions and actions as JSON, to read or copy")
-                .sheet(isPresented: $showingJSON) {
-                    RuleJSONSheet(rule: rule) { showingJSON = false }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .disabled(usesAdvancedOptions)
+                .help(usesAdvancedOptions
+                      ? localized("This rule uses advanced options (scope, condition groups or sharing), so they stay visible.")
+                      : localized("Simple shows the name, conditions and actions. Advanced adds scope, condition groups, sharing across folders and JSON."))
+                if showsAdvanced {
+                    Button {
+                        showingJSON = true
+                    } label: {
+                        Label("View as JSON", systemImage: "curlybraces")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .help("Show this rule's scope, conditions and actions as JSON, to read or copy")
+                    .sheet(isPresented: $showingJSON) {
+                        RuleJSONSheet(rule: rule) { showingJSON = false }
+                    }
                 }
             }
             if showValidationErrors, !validationMessages.isEmpty {
@@ -134,9 +150,11 @@ struct RuleEditorView: View {
                     GlassCard {
                         VStack(alignment: .leading, spacing: 14) {
                             GlassField(placeholder: "Rule name", text: $rule.name)
-                            ScopeEditor(depth: $rule.recursionDepth)
-                            if model.folders.contains(where: { $0.id != rule.folderId }) {
-                                folderSharing
+                            if showsAdvanced {
+                                ScopeEditor(depth: $rule.recursionDepth)
+                                if model.folders.contains(where: { $0.id != rule.folderId }) {
+                                    folderSharing
+                                }
                             }
 
                             if rule.conditionGroups.count < 2 {
@@ -165,13 +183,15 @@ struct RuleEditorView: View {
                         }
                         .buttonStyle(IconButtonStyle())
                         .help("Add condition")
-                        Button {
-                            addGroup()
-                        } label: {
-                            Image(systemName: "rectangle.stack.badge.plus")
+                        if showsAdvanced {
+                            Button {
+                                addGroup()
+                            } label: {
+                                Image(systemName: "rectangle.stack.badge.plus")
+                            }
+                            .buttonStyle(IconButtonStyle())
+                            .help("Add a condition group — combine it with the others using all / any")
                         }
-                        .buttonStyle(IconButtonStyle())
-                        .help("Add a condition group — combine it with the others using all / any")
                     }
                     if rule.conditionGroups.count > 1 {
                         Picker("", selection: $rule.conditionMatch) {
@@ -491,6 +511,21 @@ struct RuleEditorView: View {
 
     /// The classic three-option picker for a single-group rule: `.all`/`.any`
     /// live in the group, `.none` lives at the rule level.
+    /// Options a rule can only have been given in Advanced; while it has
+    /// them they stay on screen, so Simple never hides what the rule does.
+    private var usesAdvancedOptions: Bool {
+        rule.recursionDepth != 0
+            || rule.conditionGroups.count > 1
+            || !linkedFolderIds.isEmpty
+            || !newSharedFolderIds.isEmpty
+    }
+
+    private var showsAdvanced: Bool { prefersAdvanced || usesAdvancedOptions }
+
+    private var advancedBinding: Binding<Bool> {
+        Binding(get: { showsAdvanced }, set: { prefersAdvanced = $0 })
+    }
+
     private var singleGroupMatch: Binding<ConditionMatch> {
         Binding(
             get: {

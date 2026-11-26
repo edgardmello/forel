@@ -27,6 +27,8 @@ All notable changes to Forel are documented here. Format loosely follows
 - Upload passwords typed in a destination URL (`user:password@host`) are now kept in your Keychain instead of Forel's database, and existing ones are moved there on launch. They are no longer passed to the upload on its command line, where other apps on the Mac could read them.
 
 ### Added
+- Organize → Folder Flow shows, for every watched folder, where its rules send files: on to another watched folder, somewhere else, or to the Trash, and which folders send files to it. Loops between folders are marked.
+- The rule editor has Simple and Advanced views. Simple shows the name, conditions and actions; Advanced adds scope, condition groups, sharing across folders and JSON. A rule that already uses advanced options always shows them.
 - A folder with no rules offers Start from a Template: move PDFs to Documents, sort images into monthly folders, collect screenshots, unzip archives, move week-old installers to the Trash, or tag files older than 30 days. The rule opens in the editor turned off, so nothing runs until you save it and turn it on.
 - Forel speaks Portuguese (Brazil) when that's your Mac's language: menus, settings, the rule editor's conditions and actions, and most messages. Some messages that include numbers or names are still in English.
 - Run Now shows how many items it has checked out of the total, with a Stop button. Stopping keeps what was already done and says how far it got.

@@ -22,6 +22,7 @@ enum RuleOrganizingSheet: String, Identifiable {
     case check
     case order
     case dailyInbox
+    case flow
 
     var id: String { rawValue }
 }
@@ -164,6 +165,145 @@ private struct DiagnosticRow: View {
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
+    }
+}
+
+// MARK: - Folder flow map
+
+/// Each watched folder with where its rules send files: on to another
+/// watched folder (whose rules run next), elsewhere, or to the Trash. Loops
+/// between watched folders are marked.
+struct FolderFlowSheet: View {
+    @EnvironmentObject var model: AppModel
+    let onClose: () -> Void
+
+    @State private var nodes: [FolderFlow.Node] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ViewHeader(
+                title: "Folder Flow",
+                subtitle: "Where each watched folder's rules send files",
+                systemImage: "point.3.connected.trianglepath.dotted"
+            )
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(nodes) { node in
+                        FolderFlowCard(node: node, name: name(of:), onShowRule: { ruleId in
+                            onClose()
+                            model.reveal(ruleId: ruleId, inFolder: node.folder.id)
+                        })
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+            HStack {
+                Text("Rules that are turned off are shown dimmed. Destinations with tokens show the part before the first token.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(ForelTheme.secondaryText)
+                Spacer()
+                Button("Done", action: onClose)
+                    .buttonStyle(SecondaryButtonStyle())
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 640, height: 560)
+        .background(ForelTheme.background)
+        .onAppear {
+            let pairs = model.allRules()
+            let rulesByFolder = Dictionary(grouping: pairs, by: { $0.folder.id }).mapValues { $0.map(\.rule) }
+            nodes = FolderFlow.map(folders: model.folders, rulesByFolder: rulesByFolder)
+        }
+    }
+
+    private func name(of folderId: String) -> String {
+        model.folders.first { $0.id == folderId }.map { ($0.path as NSString).lastPathComponent } ?? folderId
+    }
+}
+
+private struct FolderFlowCard: View {
+    let node: FolderFlow.Node
+    let name: (String) -> String
+    let onShowRule: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: node.folder.enabled ? "folder.fill" : "folder")
+                    .foregroundStyle(ForelTheme.accent)
+                Text((node.folder.path as NSString).lastPathComponent)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ForelTheme.primaryText)
+                Text(node.folder.path)
+                    .font(.system(size: 11))
+                    .foregroundStyle(ForelTheme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                Spacer()
+            }
+            if !node.incomingFrom.isEmpty {
+                Label {
+                    Text(localized("Receives files from") + " " + node.incomingFrom.map(name).joined(separator: ", "))
+                } icon: {
+                    Image(systemName: "arrow.down.right")
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(ForelTheme.secondaryText)
+            }
+            if node.outgoing.isEmpty {
+                Text("Files stay in this folder.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(ForelTheme.secondaryText)
+            }
+            ForEach(node.outgoing) { step in
+                HStack(spacing: 8) {
+                    Image(systemName: icon(for: step.destination))
+                        .frame(width: 16)
+                        .foregroundStyle(step.inLoop ? Color.orange : ForelTheme.accent)
+                    Text(destinationText(step.destination))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(ForelTheme.primaryText)
+                        .textSelection(.enabled)
+                    Text("· \(localized(step.action.label)) · “\(step.ruleName)”")
+                        .font(.system(size: 11))
+                        .foregroundStyle(ForelTheme.secondaryText)
+                        .lineLimit(1)
+                    if step.inLoop {
+                        Text("Loop")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.orange)
+                            .help("Files can come back here from that folder and go around in a circle. Check Rules explains how to fix it.")
+                    }
+                    Spacer()
+                    Button("Show Rule") { onShowRule(step.ruleId) }
+                        .buttonStyle(.link)
+                        .font(.system(size: 11))
+                }
+                .opacity(step.ruleEnabled ? 1 : 0.5)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
+    }
+
+    private func icon(for destination: FolderFlow.Destination) -> String {
+        switch destination {
+        case .watched: return "arrow.right.circle.fill"
+        case .elsewhere: return "arrow.up.right.square"
+        case .trash: return "trash"
+        case .removed: return "xmark.bin"
+        }
+    }
+
+    private func destinationText(_ destination: FolderFlow.Destination) -> String {
+        switch destination {
+        case .watched(let folderId): return "→ " + name(folderId)
+        case .elsewhere(let path): return "→ " + (path as NSString).abbreviatingWithTildeInPath
+        case .trash: return "→ " + localized("Trash")
+        case .removed: return localized("Deleted or uploaded")
+        }
     }
 }
 
