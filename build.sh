@@ -135,6 +135,11 @@ assemble_app_bundle() {
   if [[ -d "$resource_bundle" ]]; then
     cp -R "$resource_bundle" "$resources_dir/"
   fi
+  # UI translations (en is the source language; the others translate it).
+  local lproj
+  for lproj in "$repo_root"/Localization/*.lproj; do
+    [[ -d "$lproj" ]] && cp -R "$lproj" "$resources_dir/"
+  done
 }
 
 # Writes Info.plist into $1, with $2 as both CFBundleShortVersionString and
@@ -150,6 +155,11 @@ write_info_plist() {
 <dict>
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>pt-BR</string>
+  </array>
   <key>CFBundleDisplayName</key>
   <string>Forel</string>
   <key>CFBundleExecutable</key>

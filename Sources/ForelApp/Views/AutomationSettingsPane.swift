@@ -174,7 +174,7 @@ struct AutomationSettingsPane: View {
         toggle: @escaping (Bool, Int) -> TrashCleanupPolicy
     ) -> some View {
         HStack(spacing: 10) {
-            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(ForelTheme.primaryText)
+            Text(localized(title)).font(.system(size: 13, weight: .semibold)).foregroundStyle(ForelTheme.primaryText)
             Spacer()
             Stepper(
                 "\(value) \(unit(value))",

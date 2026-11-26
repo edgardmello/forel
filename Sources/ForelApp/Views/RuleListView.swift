@@ -540,20 +540,31 @@ struct RuleListView: View {
             .buttonStyle(PrimaryButtonStyle())
             .disabled(model.selectedFolderId == nil)
 
-            Button {
-                model.runNow()
-            } label: {
-                if model.isRunningNow {
-                    HStack(spacing: 6) {
+            if model.isRunningNow {
+                HStack(spacing: 6) {
+                    if let total = model.runNowProgress?.total, total > 0 {
+                        ProgressView(value: Double(model.runNowProgress?.done ?? 0), total: Double(total))
+                            .frame(width: 80)
+                        Text("\(model.runNowProgress?.done ?? 0) of \(total)")
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(ForelTheme.secondaryText)
+                    } else {
                         ProgressView().controlSize(.small)
                         Text("Running…")
                     }
-                } else {
+                    Button("Stop") { model.stopRunNow() }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .help("Stops after the current file. What was already done stays done and can be undone in Activity.")
+                }
+            } else {
+                Button {
+                    model.runNow()
+                } label: {
                     Label("Run Now", systemImage: "play.fill")
                 }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(model.selectedFolderId == nil)
             }
-            .buttonStyle(SecondaryButtonStyle())
-            .disabled(model.selectedFolderId == nil || model.isRunningNow)
 
             Button {
                 model.preview()
@@ -710,6 +721,21 @@ struct RuleListView: View {
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .padding(.top, 8)
+                Menu {
+                    ForEach(RuleTemplate.allCases) { template in
+                        Button {
+                            guard let folderId = model.selectedFolderId else { return }
+                            editingRule = template.rule(folderId: folderId)
+                        } label: {
+                            Label(localized(template.title), systemImage: template.systemImage)
+                        }
+                    }
+                } label: {
+                    Text("Start from a Template")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Opens a ready-made rule in the editor. Nothing runs until you save it and turn it on.")
             }
         }
         .frame(maxWidth: .infinity)

@@ -122,4 +122,82 @@ public enum DailyInbox {
             ]
         )
     }
+
+    /// What `apply` did, for the message the app shows.
+    public struct Outcome: Equatable, Sendable {
+        public let inbox: WatchedFolder
+        /// Names of the rules moved to the inbox with a wait.
+        public let moved: [String]
+        public let turnedOff: [String]
+        /// Rules asked to move that can't wait safely, kept where they were.
+        public let skipped: [String]
+    }
+
+    public struct SetupError: Error, CustomStringConvertible, Equatable {
+        public let description: String
+    }
+
+    /// Sets up the inbox: creates the folder `inboxName` inside `source`,
+    /// watches it (re-enabling it if it was watched and off), applies each
+    /// rule's choice, and adds the rule that sends new files to the inbox.
+    /// The app only starts watching the inbox and shows the outcome.
+    public static func apply(
+        source: WatchedFolder,
+        inboxName: String,
+        days: Int,
+        choices: [String: Choice],
+        in db: Database,
+        fileManager: FileManager = .default
+    ) throws -> Outcome {
+        let name = inboxName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !name.contains("/") else {
+            throw SetupError(description: "Enter a folder name without “/” for the inbox.")
+        }
+        let inboxPath = ((source.path as NSString).appendingPathComponent(name) as NSString).standardizingPath
+        do {
+            try fileManager.createDirectory(atPath: inboxPath, withIntermediateDirectories: true)
+        } catch {
+            throw SetupError(description: "Forel couldn't create the inbox folder at \(inboxPath): \(error.localizedDescription)")
+        }
+
+        return try db.withLock { db in
+            let existing = try db.listFolders().first { ($0.path as NSString).standardizingPath == inboxPath }
+            let inbox: WatchedFolder
+            if let existing {
+                if !existing.enabled { try db.toggleFolder(existing.id, enabled: true) }
+                inbox = existing
+            } else {
+                inbox = WatchedFolder(path: inboxPath)
+                try db.insertFolder(inbox)
+            }
+
+            var moved: [String] = []
+            var turnedOff: [String] = []
+            var skipped: [String] = []
+            for rule in try db.listRules(folderId: source.id) {
+                switch choices[rule.id] ?? defaultChoice(for: rule) {
+                case .keepHere:
+                    continue
+                case .turnOff:
+                    try db.toggleRule(rule.id, enabled: false)
+                    turnedOff.append(rule.name)
+                case .moveToInbox:
+                    guard canWait(rule) else {
+                        skipped.append(rule.name)
+                        continue
+                    }
+                    try db.moveRule(rule.id, toFolder: inbox.id)
+                    // Re-read for the priority the move gave it.
+                    guard let placed = try db.listRules(folderId: inbox.id).first(where: { $0.id == rule.id }),
+                          let waiting = waiting(placed, days: days, inFolder: inbox.id) else { continue }
+                    // Unlinked first, so the wait doesn't reach copies of
+                    // the rule shared with other folders.
+                    try db.saveRule(waiting, sharingWith: [], unlink: true)
+                    moved.append(rule.name)
+                }
+            }
+            try db.insertRule(intakeRule(sourceFolderId: source.id, inboxPath: inboxPath))
+            return Outcome(inbox: inbox, moved: moved, turnedOff: turnedOff, skipped: skipped)
+        }
+    }
 }

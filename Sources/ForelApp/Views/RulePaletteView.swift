@@ -146,7 +146,7 @@ struct RulePaletteView: View {
     }
 
     private func sectionHeader(_ title: String) -> some View {
-        Text(title.uppercased())
+        Text(localized(title).uppercased())
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(ForelTheme.secondaryText)
             .padding(.horizontal, 14)

@@ -52,6 +52,8 @@ struct QuickPanelView: View {
                     )
                 }
 
+                BusyItemRow()
+
                 HealthIssuesCard(health: model.health, onOpenMainWindow: onOpenMainWindow, onShowActivity: {
                     model.detailRoute = .history
                     onOpenMainWindow()
@@ -160,7 +162,7 @@ private struct QuickCount: View {
             Text("\(value)")
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(ForelTheme.primaryText)
-            Text(label)
+            Text(localized(label))
                 .font(.system(size: 11))
                 .foregroundStyle(ForelTheme.secondaryText)
         }
@@ -226,6 +228,28 @@ private struct HealthIssuesCard: View {
             HStack(spacing: 8) {
                 Button("Show in Activity", action: onShowActivity)
                 Button("Dismiss") { health.dismissDowntime() }
+            }
+        }
+    }
+}
+
+/// While automatic rules spend more than a few seconds on one file (a large
+/// upload or conversion), says which: other files wait behind it.
+private struct BusyItemRow: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            if let busy = model.watcherBusyItem, context.date.timeIntervalSince(busy.since) >= 3 {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Working on \((busy.path as NSString).lastPathComponent) for \(Int(context.date.timeIntervalSince(busy.since))) s; other files wait until it's done.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(ForelTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .padding(.horizontal, 4)
             }
         }
     }

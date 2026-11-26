@@ -125,7 +125,7 @@ struct AISettingsPane: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer()
-                            Toggle("Remember reviews", isOn: Binding(get: { model.rememberReviews }, set: model.setRememberReviews))
+                            Toggle("Remember reviews", isOn: Binding(get: { model.rememberReviews }, set: { model.setRememberReviews($0) }))
                                 .labelsHidden()
                                 .toggleStyle(.switch)
                                 .controlSize(.small)
@@ -227,7 +227,7 @@ struct AISettingsPane: View {
 
     private func row<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         HStack {
-            Text(title)
+            Text(localized(title))
                 .font(.system(size: 12))
                 .foregroundStyle(ForelTheme.primaryText)
                 .frame(width: 70, alignment: .leading)

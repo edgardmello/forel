@@ -288,8 +288,27 @@ public final class WatcherCoordinator: @unchecked Sendable {
 
         guard let depth = RuleEngine.pathDepth(root: folder.path, path: path) else { return }
         let batchId = UUID().uuidString
-        let (matched, history) = RuleEngine.run(path: path, depth: depth, rules: rules, batchId: batchId, root: folder.path, nestedRoots: nested)
+        let (matched, history) = running(on: path) {
+            RuleEngine.run(path: path, depth: depth, rules: rules, batchId: batchId, root: folder.path, nestedRoots: nested)
+        }
         record(matched: matched, history: history, path: path, rules: rules)
+    }
+
+    private let busyLock = NSLock()
+    private var busy: (path: String, since: Date)?
+
+    /// The file rules are running on right now, and since when. Files in
+    /// every folder wait in one line, so a slow action (a large upload, a
+    /// conversion) holds up the others; the quick panel shows what it is.
+    public var busyItem: (path: String, since: Date)? {
+        busyLock.lock(); defer { busyLock.unlock() }
+        return busy
+    }
+
+    private func running<T>(on path: String, _ body: () -> T) -> T {
+        busyLock.lock(); busy = (path, Date()); busyLock.unlock()
+        defer { busyLock.lock(); busy = nil; busyLock.unlock() }
+        return body()
     }
 
     private func beginProcessing(root: String) {
@@ -646,7 +665,7 @@ public final class WatcherCoordinator: @unchecked Sendable {
             RuleEngine.forEachEntry(root: folder.path, maxDepth: RuleEngine.maxRuleDepth(scanned), skipping: nested) { entry in
                 // Still arriving: the settle check will run every rule on it.
                 guard settling[entry.path] == nil, settlingAncestor(of: entry.path) == nil else { return }
-                let (matched, history) = RuleEngine.run(
+                let (matched, history) = running(on: entry.path) { RuleEngine.run(
                     path: entry.path,
                     depth: entry.depth,
                     rules: rules,
@@ -656,7 +675,7 @@ public final class WatcherCoordinator: @unchecked Sendable {
                     shouldConsider: { rule, path in
                         timeRuleIds.contains(rule.id) && !RuleMatchMemory.shared.hasMatchedUnchanged(ruleId: rule.id, path: path)
                     }
-                )
+                ) }
                 guard !matched.isEmpty || !history.isEmpty else { return }
                 record(matched: matched, history: history, path: entry.path, rules: rules)
             }
@@ -669,7 +688,9 @@ public final class WatcherCoordinator: @unchecked Sendable {
         guard hasPathChangedSinceLastEvaluation(path) else { return }
 
         let batchId = UUID().uuidString
-        let (matched, history) = RuleEngine.run(path: path, depth: depth, rules: rules, batchId: batchId, root: watchedRoot, nestedRoots: nestedRoots)
+        let (matched, history) = running(on: path) {
+            RuleEngine.run(path: path, depth: depth, rules: rules, batchId: batchId, root: watchedRoot, nestedRoots: nestedRoots)
+        }
         record(matched: matched, history: history, path: path, rules: rules)
     }
 

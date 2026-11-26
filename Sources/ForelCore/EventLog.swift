@@ -39,6 +39,9 @@ public struct LoggedEvent: Identifiable, Sendable, Equatable {
         case volumeUnavailable
         /// Watching was paused or resumed.
         case watching
+        /// A folder (or a subfolder inside one) couldn't be listed, so its
+        /// files were left alone.
+        case folderUnreadable
 
         public var label: String {
             switch self {
@@ -51,6 +54,7 @@ public struct LoggedEvent: Identifiable, Sendable, Equatable {
             case .dryRun: return "Dry Run"
             case .volumeUnavailable: return "Disk not connected"
             case .watching: return "Watching"
+            case .folderUnreadable: return "Folder can't be read"
             }
         }
 
@@ -65,6 +69,7 @@ public struct LoggedEvent: Identifiable, Sendable, Equatable {
             case .dryRun: return "eye"
             case .volumeUnavailable: return "externaldrive.badge.exclamationmark"
             case .watching: return "eye.circle"
+            case .folderUnreadable: return "folder.badge.questionmark"
             }
         }
     }

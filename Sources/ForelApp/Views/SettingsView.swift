@@ -16,6 +16,7 @@
 
 import SwiftUI
 import ForelCore
+import UniformTypeIdentifiers
 
 /// Modern macOS Settings layout: a category sidebar on the left (matching
 /// System Settings' own convention), detail content on the right — instead
@@ -201,13 +202,29 @@ struct SettingsView: View {
                 }
                 .padding(.vertical, 10)
                 .padding(.horizontal, 14)
+                Divider().overlay(ForelTheme.divider).padding(.leading, 14)
+                SettingsActionRow(
+                    title: "Diagnostics",
+                    subtitle: "Versions, watched folders, health and recent events as a text file for bug reports. Home folder paths are shortened; no file contents or passwords.",
+                    buttonTitle: "Export…",
+                    action: exportDiagnostics
+                )
             }
         }
     }
 
+    private func exportDiagnostics() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = "Forel Diagnostics.txt"
+        panel.prompt = "Export"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        model.exportDiagnostics(to: url)
+    }
+
     private func aboutRow(title: String, value: String) -> some View {
         HStack {
-            Text(title).font(.system(size: 13)).foregroundStyle(ForelTheme.primaryText)
+            Text(localized(title)).font(.system(size: 13)).foregroundStyle(ForelTheme.primaryText)
             Spacer()
             Text(value)
                 .font(.system(size: 12))
