@@ -64,7 +64,7 @@ import AppKit
         // OCR may be unavailable in some headless environments; only assert the
         // match when recognition actually produced text.
         if result.text != nil {
-            #expect(result.strategy == .pdfOCR)
+            #expect([.indraOCR, .pdfOCR].contains(result.strategy))
             #expect(ConditionEvaluator.evaluate(makeCondition(.contents, .contains, "SCANNED"), path: pdf))
         }
     }
@@ -250,7 +250,7 @@ import AppKit
         // OCR may be unavailable in some headless environments; only assert the
         // match when recognition actually produced text.
         if result.text != nil {
-            #expect(result.strategy == .imageOCR)
+            #expect([.indraOCR, .imageOCR].contains(result.strategy))
             #expect(ConditionEvaluator.evaluate(makeCondition(.contents, .contains, "HELLO"), path: png))
         }
     }

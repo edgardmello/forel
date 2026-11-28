@@ -243,7 +243,7 @@ File path
   │
   ├─ Known plain text (.txt, .md, .json, …) ────► read as UTF‑8 / UTF‑16 / ISO Latin 1
   │
-  ├─ PDF ──► text layer ─(empty)─► Vision OCR (Apple Neural Engine)
+  ├─ PDF ──► text layer · scanned/mixed pages ──► Indra OCR (local CPU), or Vision OCR if Indra isn't installed
   │
   ├─ RTF / .doc/.docx ──► AppKit document reader (main thread)
   │
@@ -251,7 +251,7 @@ File path
   │
   ├─ .pages / .numbers / .key ──► ZIP → Preview.pdf → PDF text
   │
-  ├─ Images (.png, .jpg, .heic, .webp, .gif, …) ──► Vision OCR (Apple Neural Engine)
+  ├─ Images (.png, .jpg, .heic, .webp, .gif, …) ──► Indra OCR (local CPU), or Vision OCR if Indra isn't installed
   │
   ├─ .xls / .ppt / .epub ──► Spotlight query (contains only)
   │
@@ -261,15 +261,42 @@ File path
 | Type | Formats | Limits |
 |------|---------|--------|
 | Plain text | `.txt` `.md` `.csv` `.tsv` `.json` `.xml` `.yaml` `.yml` `.html` `.css` `.js` `.ts` `.swift` `.rs` `.py` `.rb` `.go` `.java` `.c` `.cpp` `.h` `.log`, plus any other text file (`.ini`, `.conf`, no extension, …) | 100 MB |
-| PDF | `.pdf` (text layer, or OCR for scanned PDFs) | 100 MB / 100 pages · OCR 20 pages |
+| PDF | `.pdf` (text layer, or OCR for scanned/mixed PDFs) | 100 MB / 100 pages · OCR 20 pages (longer PDFs use their text layer) |
 | Rich text | `.rtf` `.rtfd` | 100 MB |
 | Word | `.doc` `.docx` `.dotx` | 100 MB |
 | Excel | `.xlsx` `.xltx` | 100 MB |
 | PowerPoint | `.pptx` `.potx` | 100 MB |
 | Apple iWork | `.pages` `.numbers` `.key` | 100 MB |
 | OpenDocument | `.odt` `.ods` `.odp` | 100 MB |
-| Images (OCR) | `.png` `.jpg` `.jpeg` `.heic` `.tiff` `.tif` `.webp` `.gif` `.bmp` `.jp2` `.psd` | 25 MB / 12000 px |
+| Images (OCR) | `.png` `.jpg` `.jpeg` `.heic` `.tiff` `.tif` `.webp` `.gif` `.bmp` `.jp2` `.psd` | 25 MB / 12000 px / 20 frames |
 | Spotlight fallback | `.xls` `.ppt` `.epub` | `contains` only |
+
+Without any setup, Forel reads scans and images with Apple's on-device Vision OCR.
+For better results on scanned and mixed PDFs, install the optional local
+[Indra OCR](https://github.com/datalab-to/indra) runtime once from the source
+folder (Python 3.10 or newer is required):
+
+```bash
+./scripts/setup-indra.sh
+```
+
+The script installs `indra-ocr==1.1.2` in
+`~/Library/Application Support/Forel/Indra` and downloads its models (about 76 MB).
+Set `FOREL_INDRA_PYTHON` to a Python executable to choose the interpreter.
+After setup, documents stay on this Mac and inference works offline. Forel also
+finds `indra-ocr` in Homebrew, `~/.local/bin`, or its inherited PATH;
+`FOREL_INDRA_EXECUTABLE` can select an absolute executable path when launching
+from a terminal. Once Indra is installed, a timeout, unreadable pages, or OCR limits
+produce no content match, including for negative operators, with an explanation
+in Dry Run. Successful OCR results are reused until the file changes.
+HEIC and other formats outside Indra's supported image formats are decoded
+locally to a temporary PNG (first frame); TIFF retains its multiple pages.
+Plain digital PDFs and editable documents keep their native text extractors.
+The same extraction feeds Contents, Document (AI), and document-based name
+tokens; Document (AI) still uses Apple Intelligence to interpret the text.
+Make PDF Searchable continues to use Apple's Vision OCR.
+Indra's code and model weights have separate licenses; see the project's
+[license terms](https://github.com/datalab-to/indra#license).
 
 > [!NOTE]
 > **Apple iWork** files are read from the preview the app saves inside the

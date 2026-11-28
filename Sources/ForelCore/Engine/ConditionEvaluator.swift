@@ -199,8 +199,9 @@ public enum ConditionEvaluator {
         if let reason = LocalAI.unavailableReason { return (false, reason) }
         let description = condition.value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !description.isEmpty else { return (false, "No description to compare with.") }
-        guard let text = ContentExtractor.extract(path: path).text, !text.isEmpty else {
-            return (false, "No readable text in this file.")
+        let extraction = ContentExtractor.extract(path: path)
+        guard let text = extraction.text, !text.isEmpty else {
+            return (false, extraction.message ?? "No readable text in this file.")
         }
         guard let fits = LocalAI.classify(text: text, fileName: (path as NSString).lastPathComponent, description: description) else {
             return (false, "Apple Intelligence didn't give an answer.")

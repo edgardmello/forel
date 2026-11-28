@@ -5,6 +5,12 @@ All notable changes to Forel are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Optional local Indra OCR for scanned and mixed PDFs and images in Contents and Document (AI) conditions: install it once with `scripts/setup-indra.sh`; without it, Forel keeps using Apple's on-device OCR.
+- PDFs that mix digital and scanned pages are now read in full, not just their digital pages (with Indra OCR, up to 20 pages).
+- Dry Run explains why a file's contents couldn't be read (locked PDF, OCR limit, OCR failure) for Document (AI) conditions too.
+
 ### Fixed
 
 - Dry Run now says when rules in the folder are turned off and weren't checked, instead of only reporting that no files match.
