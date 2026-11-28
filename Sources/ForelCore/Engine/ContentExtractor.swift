@@ -20,7 +20,8 @@
 // text it matches against can come from several sources depending on the file
 // type. `ContentExtractor` is the ordered pipeline that turns a path into text:
 // plain files are read directly, PDFs use their text layer, Word/RTF documents
-// are decoded with AppKit, and images are run through on-device OCR.
+// are decoded with AppKit, and scans/images use local Indra OCR when it is
+// installed, falling back to Apple's on-device Vision OCR otherwise.
 //
 // Each extractor reports which `ContentStrategy` produced the text (surfaced in
 // the Dry Run) and, when nothing readable is found, a short `message` explaining
@@ -48,6 +49,7 @@ public enum ContentStrategy: String, Sendable {
     case iWork
     case spotlight
     case imageOCR
+    case indraOCR
     case none
 
     /// Human-readable label shown in the Dry Run details.
@@ -64,6 +66,7 @@ public enum ContentStrategy: String, Sendable {
         case .iWork: return "iWork document"
         case .spotlight: return "Spotlight"
         case .imageOCR: return "Image OCR"
+        case .indraOCR: return "Indra OCR"
         case .none: return "No readable content"
         }
     }
@@ -252,14 +255,31 @@ public enum ContentExtractor {
         guard let doc = PDFDocument(url: URL(fileURLWithPath: path)) else {
             return ContentExtraction(text: nil, strategy: .none, message: "Could not open PDF.")
         }
+        guard !doc.isLocked else {
+            return ContentExtraction(text: nil, strategy: .none, message: "PDF is locked. Unlock it before checking its contents.")
+        }
+        // A nonempty layer on one page must not hide scanned pages elsewhere.
+        let needsOCR = (0..<doc.pageCount).contains {
+            (doc.page(at: $0)?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let indraAvailable = IndraOCR.isAvailable
+        if needsOCR, indraAvailable, doc.pageCount <= pdfOCRMaxPages {
+            return IndraOCR.extract(path: path, maxPages: pdfOCRMaxPages)
+        }
+        // Too many pages for OCR (or no Indra runtime): a text layer, even a
+        // partial one, is still better than reporting no text at all.
         let text = pdfText(from: doc)
         if !text.isEmpty {
             return ContentExtraction(text: text, strategy: .pdfText)
         }
-        // No text layer — likely a scanned PDF. OCR the rendered pages.
-        let ocr = pdfOCRText(from: doc)
-        if !ocr.isEmpty {
-            return ContentExtraction(text: ocr, strategy: .pdfOCR)
+        if !indraAvailable {
+            // No Indra runtime installed — fall back to Apple's on-device Vision OCR.
+            let ocr = pdfOCRText(from: doc)
+            if !ocr.isEmpty {
+                return ContentExtraction(text: ocr, strategy: .pdfOCR)
+            }
+        } else if doc.pageCount > pdfOCRMaxPages {
+            return ContentExtraction(text: nil, strategy: .none, message: "PDF exceeds the 20-page OCR limit. Split it before checking its contents.")
         }
         return ContentExtraction(text: nil, strategy: .none, message: "PDF has no readable text.")
     }
@@ -276,9 +296,9 @@ public enum ContentExtractor {
         return parts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// OCRs a scanned PDF by rendering each page to a bitmap and running Vision,
-    /// up to a tighter page limit since this is far more expensive than reading
-    /// a text layer.
+    /// OCRs a scanned PDF with Vision by rendering each page to a bitmap, up to
+    /// a tighter page limit since this is far more expensive than reading a
+    /// text layer. Used only when the Indra runtime is not installed.
     private static func pdfOCRText(from doc: PDFDocument) -> String {
         let pageCount = min(doc.pageCount, pdfOCRMaxPages)
         var parts: [String] = []
@@ -492,16 +512,24 @@ public enum ContentExtractor {
         if cgImage.width > ocrMaxDimension || cgImage.height > ocrMaxDimension {
             return ContentExtraction(text: nil, strategy: .none, message: "Image is too large for OCR.")
         }
-        guard let text = recognizeText(in: cgImage) else {
-            return ContentExtraction(text: nil, strategy: .none, message: "No text found in image.")
+        guard IndraOCR.isAvailable else {
+            // No Indra runtime installed — fall back to Apple's on-device Vision OCR.
+            guard let text = recognizeText(in: cgImage) else {
+                return ContentExtraction(text: nil, strategy: .none, message: "No text found in image.")
+            }
+            return ContentExtraction(text: text, strategy: .imageOCR)
         }
-        return ContentExtraction(text: text, strategy: .imageOCR)
+        if CGImageSourceGetCount(source) > pdfOCRMaxPages {
+            return ContentExtraction(text: nil, strategy: .none, message: "Image exceeds the 20-frame OCR limit.")
+        }
+        let nativeFormats: Set<String> = ["png", "jpg", "jpeg", "tiff", "tif", "bmp", "webp"]
+        let normalizedImage = nativeFormats.contains(url.pathExtension.lowercased()) ? nil : cgImage
+        return IndraOCR.extract(path: path, maxPages: pdfOCRMaxPages, normalizedImage: normalizedImage)
     }
 
     /// Runs on-device Vision text recognition on a bitmap, returning the joined
-    /// lines or `nil` when nothing is recognized (or OCR is unavailable). Shared
-    /// by image and scanned-PDF extraction. Times out after 30 seconds to avoid
-    /// hanging the caller when the Vision framework is unresponsive.
+    /// lines or `nil` when nothing is recognized (or OCR is unavailable). Used
+    /// for images and scanned PDFs when the Indra runtime is not installed.
     private static func recognizeText(in cgImage: CGImage) -> String? {
         let text = recognizeTextLines(in: cgImage)
             .map(\.text)
